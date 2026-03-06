@@ -151,6 +151,8 @@ struct MasonryGalleryView: View {
     let thumbnailLoader: ThumbnailLoader
     let onPhotoTap: (String) -> Void
     
+    @State private var internalFullScreenID: String?
+    
     private let columns = [
         GridItem(.flexible(), spacing: 4),
         GridItem(.flexible(), spacing: 4),
@@ -162,7 +164,10 @@ struct MasonryGalleryView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 4) {
                     ForEach(photoIDs, id: \.self) { id in
-                        Button(action: { onPhotoTap(id) }) {
+                        Button(action: {
+                            internalFullScreenID = id
+                            thumbnailLoader.loadThumbnails(for: [id], size: CGSize(width: 800, height: 800))
+                        }) {
                             if let thumb = thumbnailLoader.thumbnails[id] {
                                 Image(uiImage: thumb)
                                     .resizable()
@@ -184,6 +189,14 @@ struct MasonryGalleryView: View {
             }
             .navigationTitle("该组照片 (\(photoIDs.count)张)")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { internalFullScreenID != nil },
+            set: { if !$0 { internalFullScreenID = nil } }
+        )) {
+            if let id = internalFullScreenID {
+                FullScreenPhotoView(photoID: id, thumbnailLoader: thumbnailLoader)
+            }
         }
     }
 }
