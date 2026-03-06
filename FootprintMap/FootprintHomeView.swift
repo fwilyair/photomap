@@ -82,130 +82,138 @@ struct FootprintHomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                LinearGradient(
-                    colors: [Color(uiColor: .systemGroupedBackground), Color(uiColor: .secondarySystemGroupedBackground)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                // Background Layer (Option B: Cinematic Glassmorphism)
+                Image("HomeBackground")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Scale slightly to prevent transparent/white edges from the heavy blur bleeding in
+                    .scaleEffect(1.05)
+                    .clipped()
+                    // Reduced blur from 12 to 10 per user request
+                    .blur(radius: 10)
+                    .overlay(Color.black.opacity(0.25)) // Darken slightly to compensate for less blur
+                    .ignoresSafeArea()
                 
-                VStack(spacing: 32) {
-                    VStack(spacing: 16) {
+                // Content Layer (Option A: Minimalist Editorial)
+                VStack(spacing: 0) {
+                    // Header
+                    VStack(spacing: 8) {
                         Image(systemName: "map.fill")
-                            .font(.system(size: 64))
-                            .foregroundStyle(
-                                .linearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            )
-                            .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                            .font(.system(size: 40))
+                            .foregroundStyle(.white)
+                            .shadow(color: .white.opacity(0.3), radius: 10, x: 0, y: 5)
+                            .padding(.bottom, 8)
                         
                         Text("足迹地图")
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
                         
                         Text("基于本地相册的无感旅行轨迹记录")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.7))
                     }
-                    .padding(.top, 40)
+                    .padding(.top, 60)
                     
                     Spacer()
                     
-                    statusCard
-                    
-                    Spacer()
-                    
-                    VStack(spacing: 16) {
-                        if !photoManager.validPhotos.isEmpty {
-                            NavigationLink(destination: FootprintMapView(photos: photoManager.validPhotos)) {
-                                HStack {
-                                    Image(systemName: "map.fill")
-                                    Text("查看足迹地图")
-                                }
-                                .font(.headline)
+                    // Massive Visual Anchor
+                    VStack(alignment: .leading, spacing: -10) {
+                        if photoManager.isScanning {
+                            ProgressView()
+                                .scaleEffect(2.0)
+                                .tint(.white)
+                                .frame(height: 120)
+                        } else if photoManager.authorizationStatus != .authorized && photoManager.authorizationStatus != .limited {
+                            Image(systemName: "photo.lock")
+                                .font(.system(size: 60))
+                                .foregroundColor(.white.opacity(0.8))
+                                .frame(height: 120)
+                        } else {
+                            Text("\(photoManager.validPhotos.count)")
+                                .font(.system(size: 120, weight: .heavy, design: .rounded))
                                 .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 56)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.orange)
-                                        .shadow(color: Color.orange.opacity(0.4), radius: 10, x: 0, y: 5)
-                                )
+                                .shadow(color: .black.opacity(0.2), radius: 15, x: 0, y: 10)
+                                .contentTransition(.numericText())
+                                .tracking(-4) // tighter letter spacing for huge numbers
+                        }
+                        
+                        Text("张有效足迹照片")
+                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.leading, 8)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 40)
+                    .animation(.bouncy, value: photoManager.validPhotos.count)
+                    .animation(.easeInOut, value: photoManager.isScanning)
+                    
+                    Spacer()
+                    
+                    // Floating Action Bar CTA
+                    VStack(spacing: 16) {
+                        if !photoManager.validPhotos.isEmpty && (photoManager.authorizationStatus == .authorized || photoManager.authorizationStatus == .limited) {
+                            NavigationLink(destination: FootprintMapView(photos: photoManager.validPhotos)) {
+                                floatingActionBar(title: "查看足迹地图", icon: "arrow.right")
                             }
                         }
                         
-                        actionButton
+                        Button(action: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Task {
+                                if photoManager.authorizationStatus == .notDetermined {
+                                    await photoManager.requestAuthorization()
+                                } else if photoManager.authorizationStatus == .authorized || photoManager.authorizationStatus == .limited {
+                                    await photoManager.fetchPhotosWithLocation()
+                                } else {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                                        await UIApplication.shared.open(url)
+                                    }
+                                }
+                            }
+                        }) {
+                            Text(buttonTitle)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                        .disabled(photoManager.isScanning)
                     }
-                    .padding(.bottom, 40)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 50)
                 }
-                .padding(.horizontal, 24)
             }
-            // 隐藏顶部的导航栏空隙，因为我们已经处理了安全区域并让子视图自己处理标题
             .toolbar(.hidden, for: .navigationBar)
         }
     }
     
     @ViewBuilder
-    private var statusCard: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .fill(.ultraThinMaterial)
-            .frame(height: 180)
-            .overlay(
-                VStack(spacing: 16) {
-                    if photoManager.isScanning {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(.blue)
-                        Text("正在后台解析地理坐标...")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-                    } else if photoManager.authorizationStatus != .authorized && photoManager.authorizationStatus != .limited {
-                        Image(systemName: "photo.lock")
-                            .font(.system(size: 40))
-                            .foregroundColor(.secondary)
-                        Text("需要相册访问权限以生成热力图")
-                            .font(.headline)
-                    } else {
-                        VStack(spacing: 8) {
-                            Text("\(photoManager.validPhotos.count)")
-                                .font(.system(size: 48, weight: .heavy, design: .rounded))
-                                .contentTransition(.numericText()) 
-                            Text("张有效足迹照片")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-            )
-            .shadow(color: .black.opacity(0.05), radius: 15, x: 0, y: 10)
-            .animation(.easeInOut, value: photoManager.isScanning)
-            .animation(.bouncy, value: photoManager.validPhotos.count)
-    }
-    
-    @ViewBuilder
-    private var actionButton: some View {
-        Button(action: {
-            Task {
-                if photoManager.authorizationStatus == .notDetermined {
-                    await photoManager.requestAuthorization()
-                } else if photoManager.authorizationStatus == .authorized || photoManager.authorizationStatus == .limited {
-                    await photoManager.fetchPhotosWithLocation()
-                } else {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        await UIApplication.shared.open(url)
-                    }
-                }
-            }
-        }) {
-            Text(buttonTitle)
-                .font(.headline)
+    private func floatingActionBar(title: String, icon: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .background(
-                    Capsule()
-                        .fill(buttonColor)
-                        .shadow(color: buttonColor.opacity(0.4), radius: 10, x: 0, y: 5)
-                )
+            Spacer()
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 48, height: 48)
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.black)
+            }
         }
-        .disabled(photoManager.isScanning) 
+        .padding(.leading, 32)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark) // Force dark blur material
+        )
+        .overlay(
+            Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
     }
     
     private var buttonTitle: String {
@@ -214,9 +222,5 @@ struct FootprintHomeView: View {
         case .authorized, .limited: return "重新扫描合并轨迹"
         case .restricted, .denied: return "前往设置开启无感授权"
         }
-    }
-    
-    private var buttonColor: Color {
-        (photoManager.authorizationStatus == .authorized || photoManager.authorizationStatus == .limited) ? Color.green : Color.blue
     }
 }

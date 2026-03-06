@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=393, height=852, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            width: 393px;
+            height: 852px;
+            background-color: #000;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Immersive Mesh Background */
+        .mesh-bg {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                radial-gradient(circle at 50% 50%, rgba(98, 0, 234, 0.4) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255, 61, 0, 0.3) 0%, transparent 40%),
+                radial-gradient(circle at 10% 80%, rgba(0, 229, 255, 0.4) 0%, transparent 60%);
+            filter: blur(80px);
+            z-index: 0;
+            opacity: 0.8;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 54px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 40px;
+            font-size: 15px;
+            font-weight: 600;
+            z-index: 100;
+            color: white;
+        }
+
+        .dynamic-island {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 35px;
+            background: black;
+            border-radius: 20px;
+        }
+
+        /* Header */
+        .header {
+            position: relative;
+            z-index: 10;
+            margin-top: 80px;
+            text-align: center;
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.7;
+        }
+
+        /* Central Glass Ring */
+        .center-content {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            z-index: 10;
+        }
+
+        .glass-ring {
+            width: 280px;
+            height: 280px;
+            border-radius: 140px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(40px) saturate(200%);
+            -webkit-backdrop-filter: blur(40px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow:
+                0 30px 60px rgba(0, 0, 0, 0.5),
+                inset 0 0 20px rgba(255, 255, 255, 0.1),
+                inset 0 2px 2px rgba(255, 255, 255, 0.3);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .huge-number {
+            font-size: 96px;
+            font-weight: 800;
+            letter-spacing: -2px;
+            line-height: 1;
+            text-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(180deg, #fff 0%, rgba(255, 255, 255, 0.7) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .number-label {
+            font-size: 14px;
+            font-weight: 400;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 8px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* Full Width Entry Button */
+        .action-container {
+            position: relative;
+            z-index: 10;
+            padding: 0 24px 50px 24px;
+        }
+
+        .glass-btn {
+            width: 100%;
+            height: 64px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 32px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            color: white;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3), inset 0 2px 2px rgba(255, 255, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Pulse inner glow */
+        .glass-btn::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            background-size: 200% 100%;
+            transform: translateX(-100%);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="mesh-bg"></div>
+
+    <div class="status-bar">
+        <span>16:50</span>
+        <div class="dynamic-island"></div>
+        <span style="font-size: 13px;">􀙡 􀙇 􀛨</span>
+    </div>
+
+    <div class="header">
+        <div class="title">足迹地图</div>
+    </div>
+
+    <div class="center-content">
+        <div class="glass-ring">
+            <div class="huge-number">183</div>
+            <div class="number-label">张有效足迹照片</div>
+        </div>
+    </div>
+
+    <div class="action-container">
+        <div class="glass-btn">查看足迹地图</div>
+    </div>
+</body>
+
+</html>

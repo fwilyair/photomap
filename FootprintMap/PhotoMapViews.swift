@@ -825,6 +825,9 @@ struct FootprintMapView: View {
                         value: Binding(
                             get: { engine.progress },
                             set: { newProgress in
+                                if selectedAnnotation != nil {
+                                    withAnimation { selectedAnnotation = nil }
+                                }
                                 engine.seek(to: newProgress)
                             }
                         ),
@@ -834,6 +837,7 @@ struct FootprintMapView: View {
                     
                     Button(action: {
                         withAnimation(.spring()) {
+                            selectedAnnotation = nil
                             engine.togglePlayPause()
                         }
                     }) {
@@ -849,6 +853,7 @@ struct FootprintMapView: View {
                     if !engine.isPlaying && !engine.isPreparing {
                         Button(action: {
                             withAnimation(.spring()) {
+                                selectedAnnotation = nil
                                 isControlsMinimized = false
                                 engine.seek(to: 0.0) // Reset progress back to beginning upon expanding
                             }
@@ -892,6 +897,9 @@ struct FootprintMapView: View {
                             value: Binding(
                                 get: { engine.progress },
                                 set: { newProgress in
+                                    if selectedAnnotation != nil {
+                                        withAnimation(.spring()) { selectedAnnotation = nil }
+                                    }
                                     engine.seek(to: newProgress)
                                 }
                             ),
@@ -904,6 +912,7 @@ struct FootprintMapView: View {
                     HStack {
                         Button(action: {
                             withAnimation(.spring()) {
+                                selectedAnnotation = nil
                                 isControlsMinimized = true
                                 engine.togglePlayPause()
                             }

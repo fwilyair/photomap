@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */; };
+		5B752C44B68BC1DF45586D8A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F719F5AD700BE27D0101BF99 /* Assets.xcassets */; };
 		754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */; };
 		B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */; };
 		E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */; };
@@ -20,6 +21,7 @@
 		CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintMapApp.swift; sourceTree = "<group>"; };
 		D5599BCA78B1E7B317DA1EBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMapViews.swift; sourceTree = "<group>"; };
+		F719F5AD700BE27D0101BF99 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -42,6 +44,7 @@
 		EBF632A51E801D222C0F6068 /* FootprintMap */ = {
 			isa = PBXGroup;
 			children = (
+				F719F5AD700BE27D0101BF99 /* Assets.xcassets */,
 				925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */,
 				CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */,
 				D5599BCA78B1E7B317DA1EBB /* Info.plist */,
@@ -59,6 +62,7 @@
 			buildConfigurationList = 2299EDCEBCB14562E3D2183C /* Build configuration list for PBXNativeTarget "FootprintMap" */;
 			buildPhases = (
 				9603B29587172C557E94A8F8 /* Sources */,
+				6EBB736CB3F28FD71DEAE181 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -98,6 +102,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6EBB736CB3F28FD71DEAE181 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5B752C44B68BC1DF45586D8A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		9603B29587172C557E94A8F8 /* Sources */ = {
