@@ -642,17 +642,7 @@ struct FootprintMapView: View {
             )
             .ignoresSafeArea(edges: [.bottom, .horizontal])
             
-            // Top Hint
-            VStack {
-                Text("模拟器缩放地图：按住键盘 `Option (⌥)` 键并用鼠标/触控板拖动")
-                    .font(.caption)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.top, 8)
-                    .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                Spacer()
-            }
+
             
             // Fan thumbnail overlay
             if let selected = selectedAnnotation {
@@ -698,20 +688,20 @@ struct FootprintMapView: View {
         .onAppear {
             let sortedParams = photos.sorted(by: { $0.creationDate < $1.creationDate })
             
-            // Set default date range to Dec 27, 2023 05:09 - Jan 1, 2024 12:42
+            // Set default date range to Dec 27, 2023 - Jan 1, 2024
             var componentsStart = DateComponents()
             componentsStart.year = 2023
             componentsStart.month = 12
             componentsStart.day = 27
-            componentsStart.hour = 5
-            componentsStart.minute = 9
+            componentsStart.hour = 0
+            componentsStart.minute = 0
             
             var componentsEnd = DateComponents()
             componentsEnd.year = 2024
             componentsEnd.month = 1
             componentsEnd.day = 1
-            componentsEnd.hour = 12
-            componentsEnd.minute = 42
+            componentsEnd.hour = 23
+            componentsEnd.minute = 59
             
             if let defaultStart = Calendar.current.date(from: componentsStart),
                let defaultEnd = Calendar.current.date(from: componentsEnd) {
@@ -750,9 +740,14 @@ struct FootprintMapView: View {
     
     private func applyFilter() {
         engine.stop()
+        // Normalize: startDate to 00:00, endDate to 23:59
+        let cal = Calendar.current
+        let normalizedStart = cal.startOfDay(for: startDate)
+        let normalizedEnd = cal.date(bySettingHour: 23, minute: 59, second: 59, of: endDate) ?? endDate
+        
         let sorted = photos.sorted(by: { $0.creationDate < $1.creationDate })
         filteredPhotos = sorted.filter {
-            $0.creationDate >= startDate && $0.creationDate <= endDate
+            $0.creationDate >= normalizedStart && $0.creationDate <= normalizedEnd
         }
         recluster()
     }
@@ -772,16 +767,10 @@ struct FootprintMapView: View {
         waypoints = unique
     }
     
-    private var currentDisplayDate: Date? {
-        guard !waypoints.isEmpty else { return nil }
-        let progress = engine.progress
-        if progress <= 0 { return waypoints.first?.dateRange.start }
-        if progress >= 1.0 { return waypoints.last?.dateRange.end }
-        
-        let targetIdxFloat = progress * Double(waypoints.count - 1)
-        let idx = min(Int(targetIdxFloat), waypoints.count - 1)
-        
-        return waypoints[idx].dateRange.start
+    private var dateRangeDisplayText: String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy年M月d日"
+        return "\(fmt.string(from: startDate))～\(fmt.string(from: endDate))"
     }
     
     // Filter UI Sheet
@@ -790,8 +779,8 @@ struct FootprintMapView: View {
         NavigationStack {
             Form {
                 Section(header: Text("选择播放的时间段")) {
-                    DatePicker("开始时间", selection: $startDate, displayedComponents: [.date, .hourAndMinute])
-                    DatePicker("结束时间", selection: $endDate, displayedComponents: [.date, .hourAndMinute])
+                    DatePicker("开始日期", selection: $startDate, displayedComponents: [.date])
+                    DatePicker("结束日期", selection: $endDate, displayedComponents: [.date])
                 }
                 
                 Section {
@@ -889,15 +878,10 @@ struct FootprintMapView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal, 8)
                     
-                    // Date Display
-                    if let displayDate = currentDisplayDate {
-                        Text(displayDate.formatted(date: .abbreviated, time: .shortened))
-                            .font(.headline.monospacedDigit())
-                            .foregroundColor(.primary)
-                    } else {
-                        Text("该时段内无照片")
-                            .foregroundColor(.secondary)
-                    }
+                    // Date Range Display
+                    Text(dateRangeDisplayText)
+                        .font(.headline.monospacedDigit())
+                        .foregroundColor(.primary)
                     
                     // Slider (0.0 - 1.0 progress)
                     if !waypoints.isEmpty {
