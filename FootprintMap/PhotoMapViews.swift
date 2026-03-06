@@ -595,6 +595,7 @@ struct FootprintMapView: View {
     @State private var startDate = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
     @State private var endDate = Date()
     @State private var isControlsMinimized = false
+    @State private var filterBounceTrigger = 0
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -627,8 +628,12 @@ struct FootprintMapView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: { isShowingFilter.toggle() }) {
+                Button(action: { 
+                    filterBounceTrigger += 1
+                    isShowingFilter.toggle() 
+                }) {
                     Image(systemName: "line.3.horizontal.decrease.circle")
+                        .symbolEffect(.bounce, value: filterBounceTrigger)
                 }
             }
         }
@@ -761,6 +766,8 @@ struct FootprintMapView: View {
                             Image(systemName: engine.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                                 .font(.system(size: 40))
                                 .foregroundStyle(.orange)
+                                .symbolEffect(.bounce, value: engine.isPlaying)
+                                .symbolEffect(.pulse, isActive: engine.isPlaying)
                                 
                             if engine.isPreparing {
                                 ProgressView()
@@ -850,6 +857,8 @@ struct FootprintMapView: View {
                                 Image(systemName: engine.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                                     .font(.system(size: 50))
                                     .foregroundStyle(waypoints.isEmpty ? Color.gray : Color.orange)
+                                    .symbolEffect(.bounce, value: engine.isPlaying)
+                                    .symbolEffect(.pulse, isActive: engine.isPlaying)
                                     
                                 if engine.isPreparing {
                                     ProgressView()
