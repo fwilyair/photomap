@@ -1,0 +1,14 @@
+name: FootprintMap
+options:
+  bundleIdPrefix: com.seven
+targets:
+  FootprintMap:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [FootprintMap]
+    info:
+      path: FootprintMap/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSPhotoLibraryUsageDescription: "需要相册访问权限以生成热力图"
