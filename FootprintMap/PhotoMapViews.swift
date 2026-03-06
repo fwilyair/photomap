@@ -486,9 +486,18 @@ struct PhotoClusterMapView: UIViewRepresentable {
             splineCoords = context.coordinator.lastSplineCoords
         }
         
+        // --- Line Stroke Easing Function ---
+        // Simple cubic ease-in-out: slow start, faster middle, slow end
+        func eased(_ t: Double) -> Double {
+            return t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+        }
+        // ONLY the line drawing gets eased, the camera progresses linearly as before
+        let strokeVisualProgress = eased(playbackProgress)
+        // -----------------------------------
+        
         // 2. Hardware Accelerated stroke updates
         // Rebuild exact path substring. (strokeEnd uses geographic length, which misaligns with our array-index camera logic)
-        let targetIdxFloat = playbackProgress * Double(max(0, splineCoords.count - 1))
+        let targetIdxFloat = strokeVisualProgress * Double(max(0, splineCoords.count - 1))
         context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: targetIdxFloat)
         
         // 3. Dynamic Cinematic Follow Camera
