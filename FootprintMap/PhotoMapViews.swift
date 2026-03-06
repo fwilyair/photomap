@@ -74,7 +74,7 @@ class PlaybackEngine {
     private var startTime: CFTimeInterval = 0
     private var startProgress: Double = 0.0
     
-    private let prepareDuration: TimeInterval = 1.8 // Seconds to wait for camera to lock on start
+    private let prepareDuration: TimeInterval = 3.0 // 1.8s for camera flight + 1.2s buffer/focus time
     
     func togglePlayPause() {
         if isPlaying || isPreparing {
@@ -531,7 +531,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 let newCamera = MKMapCamera(lookingAtCenter: exactCurrentCoord, fromDistance: targetAltitude, pitch: 0, heading: 0)
                 
                 // Native smooth swoop utilizing the exact prep time
-                UIView.animate(withDuration: 1.5, delay: 0, options: .curveEaseInOut) {
+                UIView.animate(withDuration: 1.8, delay: 0, options: .curveEaseInOut) {
                     uiView.camera = newCamera
                 }
             }
@@ -834,12 +834,6 @@ struct FootprintMapView: View {
                                 .foregroundStyle(.orange)
                                 .symbolEffect(.bounce, value: engine.isPlaying)
                                 .symbolEffect(.pulse, isActive: engine.isPlaying)
-                                
-                            if engine.isPreparing {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(1.0)
-                            }
                         }
                     }
                     
@@ -898,16 +892,7 @@ struct FootprintMapView: View {
                     }
                     
                     // Playback controls
-                    HStack(spacing: 32) {
-                        Button(action: {
-                            withAnimation { engine.seek(to: 0.0) }
-                        }) {
-                            Image(systemName: "backward.end.fill")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                        }
-                        .disabled(waypoints.isEmpty)
-                        
+                    HStack {
                         Button(action: {
                             withAnimation(.spring()) {
                                 isControlsMinimized = true
@@ -920,25 +905,11 @@ struct FootprintMapView: View {
                                     .foregroundStyle(waypoints.isEmpty ? Color.gray : Color.orange)
                                     .symbolEffect(.bounce, value: engine.isPlaying)
                                     .symbolEffect(.pulse, isActive: engine.isPlaying)
-                                    
-                                if engine.isPreparing {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(1.2)
-                                }
                             }
                         }
                         .disabled(waypoints.isEmpty)
-                        
-                        Button(action: {
-                            withAnimation { engine.seek(to: 1.0) }
-                        }) {
-                            Image(systemName: "forward.end.fill")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                        }
-                        .disabled(waypoints.isEmpty)
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
