@@ -9,11 +9,13 @@
 /* Begin PBXBuildFile section */
 		53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */; };
 		754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */; };
+		B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */; };
 		E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		752506D7891C648ADDD56748 /* FootprintMap.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FootprintMap.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGalleryViews.swift; sourceTree = "<group>"; };
 		925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintHomeView.swift; sourceTree = "<group>"; };
 		CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintMapApp.swift; sourceTree = "<group>"; };
 		D5599BCA78B1E7B317DA1EBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -43,6 +45,7 @@
 				925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */,
 				CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */,
 				D5599BCA78B1E7B317DA1EBB /* Info.plist */,
+				7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */,
 				EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */,
 			);
 			path = FootprintMap;
@@ -103,6 +106,7 @@
 			files = (
 				E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */,
 				53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */,
+				B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */,
 				754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Photos
 
 // MARK: - Data Models
 
@@ -22,6 +23,7 @@ struct Waypoint: Identifiable, Equatable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
     let photoCount: Int
+    let photoIDs: [String]
     let dateRange: (start: Date, end: Date)
     
     static func == (lhs: Waypoint, rhs: Waypoint) -> Bool {
@@ -33,11 +35,13 @@ class WaypointAnnotation: NSObject, MKAnnotation {
     var coordinate: CLLocationCoordinate2D
     var id: String
     var count: Int
+    var photoIDs: [String]
     
     init(waypoint: Waypoint) {
         self.coordinate = waypoint.coordinate
         self.id = waypoint.id.uuidString
         self.count = waypoint.photoCount
+        self.photoIDs = waypoint.photoIDs
         super.init()
     }
 }
@@ -316,7 +320,7 @@ struct PhotoClusterer {
         
         if sorted.count <= maxWaypoints {
             return sorted.map {
-                Waypoint(coordinate: $0.location, photoCount: 1, dateRange: ($0.creationDate, $0.creationDate))
+                Waypoint(coordinate: $0.location, photoCount: 1, photoIDs: [$0.id], dateRange: ($0.creationDate, $0.creationDate))
             }
         }
         
@@ -346,6 +350,7 @@ struct PhotoClusterer {
         return Waypoint(
             coordinate: CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon),
             photoCount: photos.count,
+            photoIDs: photos.map { $0.id },
             dateRange: (photos.first!.creationDate, photos.last!.creationDate)
         )
     }
@@ -360,6 +365,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     var playbackDuration: TimeInterval
     var isPlaying: Bool
     var isPreparing: Bool
+    var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     
     class Coordinator: NSObject, MKMapViewDelegate {
         var lastWaypoints: [Waypoint] = []
@@ -369,6 +375,8 @@ struct PhotoClusterMapView: UIViewRepresentable {
         var lastIsPreparing: Bool = false
         var currentAltitude: CLLocationDistance?
         let splineManager = SplineLayerManager()
+        var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
+        var isPlayingOrPreparing = false
         
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
@@ -390,6 +398,14 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 let targetIdxFloat = lastProgress * Double(max(0, lastSplineCoords.count - 1))
                 splineManager.updatePath(for: lastSplineCoords, in: mapView, progressIndex: targetIdxFloat)
             }
+        }
+        
+        func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard !isPlayingOrPreparing,
+                  let wpAnn = view.annotation as? WaypointAnnotation else { return }
+            let screenPoint = mapView.convert(wpAnn.coordinate, toPointTo: mapView)
+            onAnnotationSelected?(wpAnn.photoIDs, screenPoint)
+            mapView.deselectAnnotation(wpAnn, animated: false)
         }
     }
     
@@ -414,6 +430,9 @@ struct PhotoClusterMapView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: MKMapView, context: Context) {
+        context.coordinator.isPlayingOrPreparing = isPlaying || isPreparing
+        context.coordinator.onAnnotationSelected = onAnnotationSelected
+        
         let splineCoords: [CLLocationCoordinate2D]
         
         // 1. Update Annotations, Overlays & Overview Bounds
@@ -597,6 +616,13 @@ struct FootprintMapView: View {
     @State private var isControlsMinimized = false
     @State private var filterBounceTrigger = 0
     
+    // Annotation interaction state
+    @State private var selectedAnnotation: SelectedAnnotationInfo?
+    @State private var thumbnailLoader = ThumbnailLoader()
+    @State private var isShowingGallery = false
+    @State private var galleryPhotoIDs: [String] = []
+    @State private var fullScreenPhotoID: String?
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             // Map Layer strictly observes progress implicitly
@@ -606,7 +632,13 @@ struct FootprintMapView: View {
                 playbackProgress: engine.progress,
                 playbackDuration: engine.duration,
                 isPlaying: engine.isPlaying,
-                isPreparing: engine.isPreparing
+                isPreparing: engine.isPreparing,
+                onAnnotationSelected: { ids, point in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                        selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+                    }
+                    thumbnailLoader.loadThumbnails(for: ids)
+                }
             )
             .ignoresSafeArea(edges: [.bottom, .horizontal])
             
@@ -620,6 +652,29 @@ struct FootprintMapView: View {
                     .padding(.top, 8)
                     .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
                 Spacer()
+            }
+            
+            // Fan thumbnail overlay
+            if let selected = selectedAnnotation {
+                FanThumbnailOverlay(
+                    photoIDs: selected.photoIDs,
+                    screenPoint: selected.screenPoint,
+                    thumbnailLoader: thumbnailLoader,
+                    onPhotoTap: { id in
+                        fullScreenPhotoID = id
+                        thumbnailLoader.loadThumbnails(for: [id], size: CGSize(width: 800, height: 800))
+                    },
+                    onMoreTap: {
+                        galleryPhotoIDs = selected.photoIDs
+                        thumbnailLoader.loadThumbnails(for: selected.photoIDs)
+                        isShowingGallery = true
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            selectedAnnotation = nil
+                        }
+                    }
+                )
             }
             
             playbackControls
@@ -668,6 +723,28 @@ struct FootprintMapView: View {
         }
         .onDisappear {
             engine.stop()
+        }
+        .onChange(of: engine.isPlaying) { _, isPlaying in
+            if isPlaying { withAnimation { selectedAnnotation = nil } }
+        }
+        .sheet(isPresented: $isShowingGallery) {
+            MasonryGalleryView(
+                photoIDs: galleryPhotoIDs,
+                thumbnailLoader: thumbnailLoader,
+                onPhotoTap: { id in
+                    fullScreenPhotoID = id
+                    thumbnailLoader.loadThumbnails(for: [id], size: CGSize(width: 800, height: 800))
+                }
+            )
+            .presentationDetents([.large])
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { fullScreenPhotoID != nil },
+            set: { if !$0 { fullScreenPhotoID = nil } }
+        )) {
+            if let id = fullScreenPhotoID {
+                FullScreenPhotoView(photoID: id, thumbnailLoader: thumbnailLoader)
+            }
         }
     }
     
