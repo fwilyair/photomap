@@ -66,48 +66,54 @@ struct FanThumbnailOverlay: View {
     
     private let maxThumbs = 3
     private let thumbSize: CGFloat = 64
+    private let fanRadius: CGFloat = 85
     
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.15)
-                .ignoresSafeArea()
-                .onTapGesture { onDismiss() }
-            
-            let displayIDs = Array(photoIDs.prefix(maxThumbs))
-            let hasMore = photoIDs.count > maxThumbs
-            let totalItems = displayIDs.count + (hasMore ? 1 : 0)
+        GeometryReader { geo in
+            let safeTop = geo.safeAreaInsets.top + 60
+            let expandUpward = screenPoint.y > (safeTop + fanRadius + thumbSize / 2)
             
             ZStack {
-                ForEach(Array(displayIDs.enumerated()), id: \.offset) { index, id in
-                    let offset = fanOffset(index: index, total: totalItems)
-                    
-                    Button(action: { onPhotoTap(id) }) {
-                        thumbnailCircle(for: id)
-                    }
-                    .offset(x: offset.x, y: offset.y)
-                    .transition(.scale.combined(with: .opacity))
-                }
+                Color.black.opacity(0.15)
+                    .ignoresSafeArea()
+                    .onTapGesture { onDismiss() }
                 
-                if hasMore {
-                    let offset = fanOffset(index: displayIDs.count, total: totalItems)
-                    
-                    Button(action: { onMoreTap() }) {
-                        ZStack {
-                            Circle()
-                                .fill(.ultraThinMaterial)
-                                .frame(width: thumbSize, height: thumbSize)
-                            Text("+\(photoIDs.count - maxThumbs)")
-                                .font(.system(size: 16, weight: .bold, design: .rounded))
-                                .foregroundStyle(.orange)
+                let displayIDs = Array(photoIDs.prefix(maxThumbs))
+                let hasMore = photoIDs.count > maxThumbs
+                let totalItems = displayIDs.count + (hasMore ? 1 : 0)
+                
+                ZStack {
+                    ForEach(Array(displayIDs.enumerated()), id: \.offset) { index, id in
+                        let offset = fanOffset(index: index, total: totalItems, upward: expandUpward)
+                        
+                        Button(action: { onPhotoTap(id) }) {
+                            thumbnailCircle(for: id)
                         }
-                        .overlay(Circle().stroke(.white, lineWidth: 2.5))
-                        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                        .offset(x: offset.x, y: offset.y)
+                        .transition(.scale.combined(with: .opacity))
                     }
-                    .offset(x: offset.x, y: offset.y)
-                    .transition(.scale.combined(with: .opacity))
+                    
+                    if hasMore {
+                        let offset = fanOffset(index: displayIDs.count, total: totalItems, upward: expandUpward)
+                        
+                        Button(action: { onMoreTap() }) {
+                            ZStack {
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .frame(width: thumbSize, height: thumbSize)
+                                Text("+\(photoIDs.count - maxThumbs)")
+                                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.orange)
+                            }
+                            .overlay(Circle().stroke(.white, lineWidth: 2.5))
+                            .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                        }
+                        .offset(x: offset.x, y: offset.y)
+                        .transition(.scale.combined(with: .opacity))
+                    }
                 }
+                .position(x: screenPoint.x, y: screenPoint.y)
             }
-            .position(x: screenPoint.x, y: screenPoint.y - 60)
         }
     }
     
@@ -129,9 +135,8 @@ struct FanThumbnailOverlay: View {
         }
     }
     
-    private func fanOffset(index: Int, total: Int) -> CGPoint {
+    private func fanOffset(index: Int, total: Int, upward: Bool) -> CGPoint {
         let spreadAngle = 70.0
-        let radius: CGFloat = 85
         let startAngle: Double
         if total == 1 {
             startAngle = 0
@@ -140,7 +145,8 @@ struct FanThumbnailOverlay: View {
         }
         let angle = total == 1 ? 0.0 : startAngle + (spreadAngle / Double(total - 1)) * Double(index)
         let rad = angle * .pi / 180
-        return CGPoint(x: sin(rad) * radius, y: -cos(rad) * radius)
+        let yDirection: CGFloat = upward ? -1 : 1
+        return CGPoint(x: sin(rad) * fanRadius, y: yDirection * cos(rad) * fanRadius)
     }
 }
 
