@@ -70,8 +70,14 @@ struct FanThumbnailOverlay: View {
     
     var body: some View {
         GeometryReader { geo in
-            let safeTop = geo.safeAreaInsets.top + 60
-            let expandUpward = screenPoint.y > (safeTop + fanRadius + thumbSize / 2)
+            let size = geo.size
+            // Compute the direction vector pointing from the screen point toward the center
+            let centerX = size.width / 2
+            let centerY = size.height / 2
+            // Base angle: direction from annotation toward screen center (in radians, 0 = up)
+            let dx = centerX - screenPoint.x
+            let dy = centerY - screenPoint.y
+            let baseAngle = atan2(dx, -dy) // atan2(x, -y) gives 0=up, positive=clockwise
             
             ZStack {
                 Color.black.opacity(0.15)
@@ -84,7 +90,7 @@ struct FanThumbnailOverlay: View {
                 
                 ZStack {
                     ForEach(Array(displayIDs.enumerated()), id: \.offset) { index, id in
-                        let offset = fanOffset(index: index, total: totalItems, upward: expandUpward)
+                        let offset = fanOffset(index: index, total: totalItems, baseAngle: baseAngle)
                         
                         Button(action: { onPhotoTap(id) }) {
                             thumbnailCircle(for: id)
@@ -94,7 +100,7 @@ struct FanThumbnailOverlay: View {
                     }
                     
                     if hasMore {
-                        let offset = fanOffset(index: displayIDs.count, total: totalItems, upward: expandUpward)
+                        let offset = fanOffset(index: displayIDs.count, total: totalItems, baseAngle: baseAngle)
                         
                         Button(action: { onMoreTap() }) {
                             ZStack {
@@ -135,18 +141,16 @@ struct FanThumbnailOverlay: View {
         }
     }
     
-    private func fanOffset(index: Int, total: Int, upward: Bool) -> CGPoint {
-        let spreadAngle = 70.0
-        let startAngle: Double
+    private func fanOffset(index: Int, total: Int, baseAngle: Double) -> CGPoint {
+        let spreadAngle = 70.0 * (.pi / 180) // Convert to radians
+        let itemAngle: Double
         if total == 1 {
-            startAngle = 0
+            itemAngle = baseAngle
         } else {
-            startAngle = -spreadAngle / 2
+            let startAngle = baseAngle - spreadAngle / 2
+            itemAngle = startAngle + (spreadAngle / Double(total - 1)) * Double(index)
         }
-        let angle = total == 1 ? 0.0 : startAngle + (spreadAngle / Double(total - 1)) * Double(index)
-        let rad = angle * .pi / 180
-        let yDirection: CGFloat = upward ? -1 : 1
-        return CGPoint(x: sin(rad) * fanRadius, y: yDirection * cos(rad) * fanRadius)
+        return CGPoint(x: sin(itemAngle) * fanRadius, y: -cos(itemAngle) * fanRadius)
     }
 }
 
