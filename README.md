@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/poster.png" alt="FootprintMap Cartographic Memory Poster" width="600"/>
+</div>
+
 # FootprintMap (足迹地图)
 
 基于本地相册的无感旅行轨迹记录与可视化呈现工具。
