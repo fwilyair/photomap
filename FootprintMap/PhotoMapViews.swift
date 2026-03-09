@@ -5,10 +5,40 @@ import Photos
 
 // MARK: - Data Models
 
-struct PhotoAsset: Identifiable, Hashable, Sendable {
+struct PhotoAsset: Identifiable, Hashable, Sendable, Codable {
     let id: String
     let location: CLLocationCoordinate2D
     let creationDate: Date
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case latitude
+        case longitude
+        case creationDate
+    }
+    
+    init(id: String, location: CLLocationCoordinate2D, creationDate: Date) {
+        self.id = id
+        self.location = location
+        self.creationDate = creationDate
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        let lat = try container.decode(Double.self, forKey: .latitude)
+        let lon = try container.decode(Double.self, forKey: .longitude)
+        location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        creationDate = try container.decode(Date.self, forKey: .creationDate)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(location.latitude, forKey: .latitude)
+        try container.encode(location.longitude, forKey: .longitude)
+        try container.encode(creationDate, forKey: .creationDate)
+    }
     
     static func == (lhs: PhotoAsset, rhs: PhotoAsset) -> Bool {
         lhs.id == rhs.id
