@@ -413,12 +413,10 @@ struct PhotoClusterMapView: UIViewRepresentable {
             if annotation is MKUserLocation { return nil }
             
             guard let wpAnn = annotation as? WaypointAnnotation else { return nil }
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: "waypoint") as? MKMarkerAnnotationView ?? MKMarkerAnnotationView(annotation: wpAnn, reuseIdentifier: "waypoint")
-            view.markerTintColor = .systemPink
-            view.glyphText = "\(wpAnn.count)"
-            view.titleVisibility = .hidden
-            view.subtitleVisibility = .hidden
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: "waypoint") as? WaypointAnnotationView ?? WaypointAnnotationView(annotation: wpAnn, reuseIdentifier: "waypoint")
             view.displayPriority = .required
+            let zPriority = MKAnnotationViewZPriority(rawValue: 1000 + Float(wpAnn.count))
+            view.zPriority = zPriority
             return view
         }
         
@@ -974,5 +972,71 @@ struct FootprintMapView: View {
         .padding(.bottom, 32)
         .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: engine.isPlaying || engine.isPreparing)
+    }
+}
+
+// MARK: - Custom Annotation View
+
+class WaypointAnnotationView: MKAnnotationView {
+    private let countLabel = UILabel()
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    private let borderView = UIView()
+    
+    override var annotation: MKAnnotation? {
+        didSet {
+            guard let wpAnn = annotation as? WaypointAnnotation else { return }
+            countLabel.text = "\(wpAnn.count)"
+            updateSize(for: wpAnn.count)
+        }
+    }
+    
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        setupView()
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        setupView()
+    }
+    
+    private func setupView() {
+        backgroundColor = .clear
+        
+        blurView.clipsToBounds = true
+        
+        borderView.layer.borderColor = UIColor.white.withAlphaComponent(0.6).cgColor
+        borderView.layer.borderWidth = 1.0
+        borderView.isUserInteractionEnabled = false
+        
+        self.layer.shadowColor = UIColor.black.cgColor
+        self.layer.shadowOpacity = 0.2
+        self.layer.shadowOffset = CGSize(width: 0, height: 4)
+        self.layer.shadowRadius = 8
+        
+        countLabel.textColor = .white
+        countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        countLabel.textAlignment = .center
+        
+        addSubview(blurView)
+        blurView.contentView.addSubview(countLabel)
+        addSubview(borderView)
+        
+        self.collisionMode = .circle
+    }
+    
+    private func updateSize(for count: Int) {
+        let size: CGFloat = count > 99 ? 36 : 28
+        self.frame = CGRect(x: 0, y: 0, width: size, height: size)
+        
+        blurView.frame = self.bounds
+        blurView.layer.cornerRadius = size / 2
+        
+        borderView.frame = self.bounds
+        borderView.layer.cornerRadius = size / 2
+        
+        countLabel.frame = self.bounds
+        
+        self.centerOffset = .zero
     }
 }
