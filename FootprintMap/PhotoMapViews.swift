@@ -404,6 +404,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
         var lastProgress: Double = -1.0
         var lastIsPreparing: Bool = false
         var currentAltitude: CLLocationDistance?
+        var initialCamera: MKMapCamera?
         let splineManager = SplineLayerManager()
         var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
         var isPlayingOrPreparing = false
@@ -537,6 +538,11 @@ struct PhotoClusterMapView: UIViewRepresentable {
         if progressChanged || preparingChanged {
             let justRewoundToZero = progressChanged && playbackProgress == 0.0 && context.coordinator.lastProgress != 0.0
             let justEnded = progressChanged && playbackProgress == 1.0 && context.coordinator.lastProgress != 1.0
+            let justStartedPreparing = preparingChanged && isPreparing && !context.coordinator.lastIsPreparing
+            
+            if justStartedPreparing {
+                context.coordinator.initialCamera = uiView.camera.copy() as? MKMapCamera
+            }
             
             context.coordinator.lastProgress = playbackProgress
             context.coordinator.lastIsPreparing = isPreparing
@@ -577,21 +583,29 @@ struct PhotoClusterMapView: UIViewRepresentable {
             // Phase 2: Returning to global overview at boundaries
             else if justRewoundToZero || justEnded {
                 context.coordinator.currentAltitude = nil
-                if let rect = context.coordinator.lastOverviewRect {
+                
+                if let initialCamera = context.coordinator.initialCamera {
+                    if justEnded {
+                        // Smoothly fly back out to user's exact pre-playback camera state
+                        UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
+                            uiView.camera = initialCamera
+                        }
+                    } else {
+                        // Native fast snap for just rewinding manually
+                        uiView.setCamera(initialCamera, animated: true)
+                    }
+                } else if let rect = context.coordinator.lastOverviewRect {
+                    // Fallback to bounding rect if no initial camera saved
                     let edgePadding = UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50)
                     if justEnded {
-                        // Smoothly fly back out with custom duration
-                        // Approximate camera properties from the rect
                         let centerCoordinate = MKMapPoint(x: rect.midX, y: rect.midY).coordinate
-                        let distance = rect.size.width * 1.5 // Rough factor to fit rect
+                        let distance = rect.size.width * 1.5
                         let newCamera = MKMapCamera(lookingAtCenter: centerCoordinate, fromDistance: distance, pitch: 0, heading: 0)
                         
-                        // Wait a brief half-second on the final point, then float up slowly
                         UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
                             uiView.camera = newCamera
                         }
                     } else {
-                        // Native fast snap for just rewinding manually
                         uiView.setVisibleMapRect(rect, edgePadding: edgePadding, animated: true)
                     }
                 }

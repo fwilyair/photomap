@@ -119,6 +119,39 @@ final class PhotoManager {
         self.saveCache()
         self.isScanning = false
     }
+    
+    func simulateAddition() {
+        // Mock a few photos with random coordinates around world cities
+        let cities = [
+            (31.23, 121.47), // Shanghai
+            (39.90, 116.40), // Beijing
+            (35.67, 139.65), // Tokyo
+            (51.50, -0.12),  // London
+            (40.71, -74.00)  // New York
+        ]
+        
+        let randomCity = cities.randomElement()!
+        let newAsset = PhotoAsset(
+            id: UUID().uuidString,
+            location: .init(latitude: randomCity.0 + Double.random(in: -0.05...0.05),
+                            longitude: randomCity.1 + Double.random(in: -0.05...0.05)),
+            creationDate: Date()
+        )
+        
+        withAnimation {
+            self.validPhotos.append(newAsset)
+            self.newlyAddedCount += 1
+            self.saveCache()
+        }
+    }
+    
+    func clearData() {
+        withAnimation {
+            self.validPhotos = []
+            self.newlyAddedCount = 0
+            self.saveCache()
+        }
+    }
 }
 
 // MARK: - UI Layer
@@ -126,6 +159,12 @@ final class PhotoManager {
 struct FootprintHomeView: View {
     @State private var photoManager = PhotoManager()
     @State private var showNoNewPhotosToast: Bool = false
+    @State private var animatedTotalCount: Double = 0
+    
+    // Zero-state animation triggers
+    @State private var showZeroStateLine1: Bool = false
+    @State private var showZeroStateLine2: Bool = false
+    @State private var showZeroStateLine3: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -146,38 +185,119 @@ struct FootprintHomeView: View {
                 // Content Layer (Option A: Minimalist Editorial)
                 VStack(spacing: 0) {
                     // Massive Visual Anchor
-                    VStack(alignment: .leading, spacing: -10) {
-                        if photoManager.isScanning {
-                            ProgressView()
-                                .scaleEffect(2.0)
-                                .tint(.white)
-                                .frame(height: 120)
-                        } else if photoManager.authorizationStatus != .authorized && photoManager.authorizationStatus != .limited {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if photoManager.authorizationStatus != .authorized && photoManager.authorizationStatus != .limited {
                             Image(systemName: "photo.lock")
                                 .font(.system(size: 60))
                                 .foregroundColor(.white.opacity(0.8))
                                 .frame(height: 120)
+                        } else if photoManager.validPhotos.isEmpty {
+                            VStack(alignment: .leading, spacing: 20) {
+                                Text("唤醒相册")
+                                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 1.0, green: 0.95, blue: 0.88),  // Luminous Champagne
+                                                Color(red: 1.0, green: 0.88, blue: 0.80),  // Bright Peach
+                                                Color(red: 0.95, green: 0.80, blue: 0.75)  // Soft Warm Rose
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .shadow(color: Color(red: 0.95, green: 0.80, blue: 0.75).opacity(0.4), radius: 16, x: 0, y: 5)
+                                    .opacity(showZeroStateLine1 ? 1 : 0)
+                                    .offset(y: showZeroStateLine1 ? 0 : 15)
+                                    .blur(radius: showZeroStateLine1 ? 0 : 8)
+                                
+                                Text("将散落的记忆锚定为")
+                                    .font(.system(size: 18, weight: .regular, design: .rounded))
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .foregroundColor(Color(red: 0.85, green: 0.88, blue: 0.92)) // distinct silver
+                                    .tracking(8)
+                                    .opacity(showZeroStateLine2 ? 1 : 0)
+                                    .offset(y: showZeroStateLine2 ? 0 : 15)
+                                    .blur(radius: showZeroStateLine2 ? 0 : 8)
+                                    
+                                Text("永恒的坐标")
+                                    .font(.system(size: 72, weight: .black, design: .rounded))
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .foregroundColor(Color(hue: 0.45, saturation: 0.6, brightness: 0.9)) // Soft cinematic teal/green
+                                    .tracking(2)
+                                    .shadow(color: Color(hue: 0.45, saturation: 0.6, brightness: 0.9).opacity(0.2), radius: 8, x: 0, y: 0)
+                                    .opacity(showZeroStateLine3 ? 1 : 0)
+                                    .offset(y: showZeroStateLine3 ? 0 : 15)
+                                    .blur(radius: showZeroStateLine3 ? 0 : 8)
+                            }
+                            .padding(.top, 10)
+                            .padding(.bottom, 20)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                            .onAppear {
+                                showZeroStateLine1 = false
+                                showZeroStateLine2 = false
+                                showZeroStateLine3 = false
+                                
+                                withAnimation(.easeOut(duration: 1.2)) {
+                                    showZeroStateLine1 = true
+                                }
+                                withAnimation(.easeOut(duration: 1.2).delay(0.8)) {
+                                    showZeroStateLine2 = true
+                                }
+                                withAnimation(.easeOut(duration: 1.2).delay(1.6)) {
+                                    showZeroStateLine3 = true
+                                }
+                            }
                         } else {
-                            Text("\(photoManager.validPhotos.count)")
-                                .font(.system(size: 140, weight: .heavy, design: .rounded))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.2), radius: 15, x: 0, y: 10)
-                                .contentTransition(.numericText())
-                                .tracking(-6) // tighter letter spacing for huge numbers
-                        }
-                        
-                        Text("枚被定格的地理印记")
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.8)) // slightly boosted visibility from 0.7
-                            .padding(.leading, 8)
-                        
-                        if photoManager.newlyAddedCount > 0 {
-                            Text("新点亮了 \(photoManager.newlyAddedCount) 处世界的角落")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(hue: 0.45, saturation: 0.6, brightness: 0.9)) // Soft cinematic teal/green
+                            VStack(alignment: .leading, spacing: -10) {
+                                AnimatedNumberView(value: animatedTotalCount)
+                                    .font(.system(size: 140, weight: .heavy, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 1.0, green: 0.95, blue: 0.88),  // Luminous Champagne
+                                                Color(red: 1.0, green: 0.88, blue: 0.80),  // Bright Peach
+                                                Color(red: 0.95, green: 0.80, blue: 0.75)  // Soft Warm Rose
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .shadow(color: Color(red: 0.95, green: 0.80, blue: 0.75).opacity(0.3),
+                                            radius: 12,
+                                            x: 0,
+                                            y: 5)
+                                    .tracking(-6) // tighter letter spacing for huge numbers
+                                
+                                Text("枚被定格的地理印记")
+                                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.8)) // slightly boosted visibility from 0.7
+                                    .padding(.leading, 8)
+                            }
+                            
+                            if photoManager.newlyAddedCount > 0 {
+                                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                    Text("新点亮了")
+                                        .font(.system(size: 16, weight: .medium, design: .rounded))
+                                        .foregroundColor(Color(red: 0.85, green: 0.88, blue: 0.92)) // Distinct metallic silver
+                                    
+                                    Text(verbatim: "\(photoManager.newlyAddedCount)")
+                                        .font(.system(size: 36, weight: .heavy, design: .rounded))
+                                        .monospacedDigit()
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.5)
+                                        .foregroundColor(Color(hue: 0.45, saturation: 0.6, brightness: 0.9)) // Soft cinematic teal/green
+                                    
+                                    Text("处世界的角落")
+                                        .font(.system(size: 16, weight: .medium, design: .rounded))
+                                        .foregroundColor(Color(red: 0.85, green: 0.88, blue: 0.92)) // Distinct metallic silver
+                                }
                                 .padding(.leading, 8)
                                 .padding(.top, 16)
                                 .transition(.opacity)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,6 +353,34 @@ struct FootprintHomeView: View {
                                     }
                                 }
                             }
+                            
+                            // TEMPORARY DEBUG BUTTONS
+                            HStack(spacing: 20) {
+                                Button(action: {
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    photoManager.simulateAddition()
+                                }) {
+                                    Label("模拟新增", systemImage: "sparkles")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                                }
+                                
+                                Button(action: {
+                                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                                    photoManager.clearData()
+                                }) {
+                                    Label("快速清理", systemImage: "trash")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(.red.opacity(0.8))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(Capsule().fill(Color.red.opacity(0.1)))
+                                }
+                            }
+                            .padding(.top, 8)
                         } else {
                             // Authorization Button
                             Button(action: {
@@ -286,6 +434,29 @@ struct FootprintHomeView: View {
                 }
             }
         }
+        .onAppear {
+            animatedTotalCount = Double(photoManager.validPhotos.count)
+            // DEBUG: list available Chinese-related fonts
+            for family in UIFont.familyNames.sorted() {
+                for name in UIFont.fontNames(forFamilyName: family) {
+                    let l = name.lowercased()
+                    if l.contains("yuan") || l.contains("heiti") || l.contains("songti") || l.contains("kaiti") || l.contains("pingfang") || l.contains("baoli") || l.contains("weibei") || l.contains("libian") || l.contains("xingkai") || l.contains("yuppy") || l.contains("lantinghei") || l.contains("hei") || l.contains("round") {
+                        print("FONT: \(family) -> \(name)")
+                    }
+                }
+            }
+        }
+        .onChange(of: photoManager.validPhotos.count) { old, new in
+            if old == 0 {
+                // Initial load: Snap immediately
+                animatedTotalCount = Double(new)
+            } else {
+                // Incremental addition: Use a slow-starting, springy ease-out bounce over ~1.5s
+                withAnimation(.interpolatingSpring(mass: 1.0, stiffness: 45, damping: 6, initialVelocity: 0)) {
+                    animatedTotalCount = Double(new)
+                }
+            }
+        }
     }
     
     @ViewBuilder
@@ -324,5 +495,20 @@ struct FootprintHomeView: View {
         case .authorized, .limited: return "添加照片"
         case .restricted, .denied: return "前往设置开启无感授权"
         }
+    }
+}
+
+struct AnimatedNumberView: View, Animatable {
+    var value: Double
+    
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    
+    var body: some View {
+        Text(verbatim: "\(Int(round(value)))")
+            .lineLimit(1)
+            .minimumScaleFactor(0.3)
     }
 }
