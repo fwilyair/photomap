@@ -666,7 +666,6 @@ struct FootprintMapView: View {
     @State private var isShowingFilter = false
     @State private var startDate = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
     @State private var endDate = Date()
-    @State private var isControlsMinimized = false
     @State private var filterBounceTrigger = 0
     
     // Annotation interaction state
@@ -820,10 +819,10 @@ struct FootprintMapView: View {
         waypoints = unique
     }
     
-    private var dateRangeDisplayText: String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy年M月d日"
-        return "\(fmt.string(from: startDate))～\(fmt.string(from: endDate))"
+    private var timeCapsuleDateText: String {
+        let fmtDay = DateFormatter()
+        fmtDay.dateFormat = "yy.MM.dd"
+        return "\(fmtDay.string(from: startDate)) ―― \(fmtDay.string(from: endDate))"
     }
     
     // Filter UI Sheet
@@ -861,127 +860,119 @@ struct FootprintMapView: View {
     // Playback UI Panel
     @ViewBuilder
     private var playbackControls: some View {
-        Group {
-            if isControlsMinimized {
-                // Minimized UI Panel during playback
-                HStack(spacing: 16) {
-                    Slider(
-                        value: Binding(
-                            get: { engine.progress },
-                            set: { newProgress in
+        // Redesigned UI: The Time Capsule
+        HStack(spacing: 20) {
+            // Left: Micro-Timeline
+            VStack(alignment: .leading, spacing: 6) {
+                // Date Text (Micro-Engraving Typography)
+                Text(timeCapsuleDateText)
+                    .font(.system(size: 13, weight: .light, design: .monospaced))
+                    .foregroundColor(.primary.opacity(0.8))
+                    .tracking(2.0)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                
+                // Custom Thin Timeline
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        // Background Track
+                        Capsule()
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(height: 2)
+                        
+                        // Active Track
+                        Capsule()
+                            .fill(Color.orange.opacity(0.8))
+                            .frame(width: max(0, geo.size.width * CGFloat(engine.progress)), height: 2)
+                            .shadow(color: .orange.opacity(0.5), radius: 2, x: 0, y: 0)
+                    }
+                    .contentShape(Rectangle()) // Make draggable
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
                                 if selectedAnnotation != nil {
-                                    withAnimation { selectedAnnotation = nil }
+                                    withAnimation(.spring()) { selectedAnnotation = nil }
                                 }
-                                engine.seek(to: newProgress)
+                                let percentage = min(max(value.location.x / geo.size.width, 0.0), 1.0)
+                                engine.seek(to: Double(percentage))
                             }
-                        ),
-                        in: 0.0...1.0
                     )
-                    .accentColor(.orange)
-                    
+                }
+                .frame(height: 16) // Padding for touch area
+            }
+            .padding(.leading, 8)
+            
+            // Right Control Cluster
+            HStack(spacing: 16) {
+                // Secondary Button: Stop (Only visible if progress > 0 or playing)
+                if !waypoints.isEmpty && (engine.isPlaying || engine.progress > 0) {
                     Button(action: {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         withAnimation(.spring()) {
                             selectedAnnotation = nil
-                            engine.togglePlayPause()
+                            engine.stop()
                         }
                     }) {
-                        ZStack {
-                            Image(systemName: engine.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.orange)
-                                .symbolEffect(.bounce, value: engine.isPlaying)
-                                .symbolEffect(.pulse, isActive: engine.isPlaying)
-                        }
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Color.gray.opacity(0.15)))
                     }
-                    
-                    if !engine.isPlaying && !engine.isPreparing {
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                selectedAnnotation = nil
-                                isControlsMinimized = false
-                                engine.seek(to: 0.0) // Reset progress back to beginning upon expanding
-                            }
-                        }) {
-                            Image(systemName: "stop.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.gray)
+                    .transition(.scale.combined(with: .opacity))
+                }
+                
+                // Primary Button: The Breathing Orb
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    withAnimation(.interpolatingSpring(stiffness: 120, damping: 12)) {
+                        selectedAnnotation = nil
+                        engine.togglePlayPause()
+                    }
+                }) {
+                    ZStack {
+                        // Base ring
+                        Circle()
+                            .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                            .frame(width: 48, height: 48)
+                            .background(
+                                Circle().fill(Color.orange.opacity(engine.isPlaying ? 0.15 : 0.05))
+                            )
+                        
+                        // Breathing aura when playing
+                        if engine.isPlaying {
+                            Circle()
+                                .fill(Color.orange.opacity(0.3))
+                                .frame(width: 48, height: 48)
+                                .blur(radius: 8)
+                                .scaleEffect(1.2)
+                                .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: engine.isPlaying)
                         }
-                        .transition(.scale.combined(with: .opacity))
+                        
+                        // Center icon
+                        Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundColor(.orange)
+                            .contentTransition(.symbolEffect(.replace))
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(.ultraThinMaterial, in: Capsule())
-            } else {
-                // Full UI Panel
-                VStack(spacing: 16) {
-                    // Duration selector
-                    Picker("总时长", selection: Binding(
-                        get: { engine.duration },
-                        set: { newDuration in
-                            engine.duration = newDuration
-                            recluster()
-                        }
-                    )) {
-                        Text("5秒").tag(5.0)
-                        Text("10秒").tag(10.0)
-                        Text("30秒").tag(30.0)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 8)
-                    
-                    // Date Range Display
-                    Text(dateRangeDisplayText)
-                        .font(.headline.monospacedDigit())
-                        .foregroundColor(.primary)
-                    
-                    // Slider (0.0 - 1.0 progress)
-                    if !waypoints.isEmpty {
-                        Slider(
-                            value: Binding(
-                                get: { engine.progress },
-                                set: { newProgress in
-                                    if selectedAnnotation != nil {
-                                        withAnimation(.spring()) { selectedAnnotation = nil }
-                                    }
-                                    engine.seek(to: newProgress)
-                                }
-                            ),
-                            in: 0.0...1.0
-                        )
-                        .accentColor(.orange)
-                    }
-                    
-                    // Playback controls
-                    HStack {
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                selectedAnnotation = nil
-                                isControlsMinimized = true
-                                engine.togglePlayPause()
-                            }
-                        }) {
-                            ZStack {
-                                Image(systemName: engine.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                    .font(.system(size: 50))
-                                    .foregroundStyle(waypoints.isEmpty ? Color.gray : Color.orange)
-                                    .symbolEffect(.bounce, value: engine.isPlaying)
-                                    .symbolEffect(.pulse, isActive: engine.isPlaying)
-                            }
-                        }
-                        .disabled(waypoints.isEmpty)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .disabled(waypoints.isEmpty)
+                .opacity(waypoints.isEmpty ? 0.3 : 1.0)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                )
+        )
+        .padding(.horizontal, 24)
         .padding(.bottom, 32)
         .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isControlsMinimized)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: engine.isPlaying || engine.isPreparing)
     }
 }
