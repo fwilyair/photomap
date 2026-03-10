@@ -979,7 +979,7 @@ struct FootprintMapView: View {
 
 class WaypointAnnotationView: MKAnnotationView {
     private let countLabel = UILabel()
-    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialLight))
     private let borderView = UIView()
     
     override var annotation: MKAnnotation? {
@@ -1005,17 +1005,17 @@ class WaypointAnnotationView: MKAnnotationView {
         
         blurView.clipsToBounds = true
         
-        borderView.layer.borderColor = UIColor.white.withAlphaComponent(0.6).cgColor
-        borderView.layer.borderWidth = 1.0
+        borderView.layer.borderColor = UIColor.white.cgColor // Pure white solid border
+        borderView.layer.borderWidth = 2.0 // Slightly thicker
         borderView.isUserInteractionEnabled = false
         
         self.layer.shadowColor = UIColor.black.cgColor
-        self.layer.shadowOpacity = 0.2
+        self.layer.shadowOpacity = 0.15
         self.layer.shadowOffset = CGSize(width: 0, height: 4)
-        self.layer.shadowRadius = 8
+        self.layer.shadowRadius = 10
         
-        countLabel.textColor = .white
-        countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        countLabel.textColor = UIColor.systemOrange // Matching theme color
+        countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold) // Bold for better readability
         countLabel.textAlignment = .center
         
         addSubview(blurView)
