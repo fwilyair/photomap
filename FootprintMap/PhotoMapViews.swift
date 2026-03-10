@@ -98,7 +98,39 @@ class PlaybackEngine {
     var isPlaying = false
     var isPreparing = false
     var progress: Double = 0.0 // 0.0 to 1.0
-    var duration: TimeInterval = 10.0 // 5s, 10s, 30s
+    var duration: TimeInterval = 10.0 // Dynamically calculated
+    
+    func calculateDynamicDuration(for waypoints: [Waypoint]) {
+        guard !waypoints.isEmpty else {
+            self.duration = 5.0
+            return
+        }
+        
+        var totalDuration: TimeInterval = 0.0
+        
+        for i in 0..<waypoints.count {
+            totalDuration += 0.9 // Base time per waypoint (snappy local pacing)
+            
+            if i < waypoints.count - 1 {
+                let wp1 = waypoints[i]
+                let wp2 = waypoints[i+1]
+                let loc1 = CLLocation(latitude: wp1.coordinate.latitude, longitude: wp1.coordinate.longitude)
+                let loc2 = CLLocation(latitude: wp2.coordinate.latitude, longitude: wp2.coordinate.longitude)
+                let dist = loc1.distance(from: loc2)
+                
+                // Adaptive Long-Jump: If distance > 50km, grant extra time for MapKit caching and visual transfer
+                if dist > 50_000 {
+                    // Grant ~2.5s per 100km to let the map load tiles steadily, up to a max jump delay of 10s per leg
+                    let extraTime = min(10.0, (dist / 100_000.0) * 2.5)
+                    totalDuration += extraTime
+                }
+            }
+        }
+        
+        // UX Research indicates 30-45 seconds is the upper bound for short-form memory recaps before attention drop-off.
+        // Capping at 45s maximum to prevent visual fatigue on extremely dense tracks.
+        self.duration = max(5.0, min(45.0, totalDuration))
+    }
     
     private var displayLink: CADisplayLink?
     private var startTime: CFTimeInterval = 0
@@ -342,36 +374,69 @@ class SplineLayerManager {
 // MARK: - Clustering Algorithm
 
 struct PhotoClusterer {
-    static func clusterPhotos(_ photos: [PhotoAsset], targetDuration: TimeInterval) -> [Waypoint] {
+    static func clusterPhotos(_ photos: [PhotoAsset]) -> [Waypoint] {
         guard !photos.isEmpty else { return [] }
-        
-        let maxWaypoints = max(5, Int(targetDuration * 2.5))
         let sorted = photos.sorted(by: { $0.creationDate < $1.creationDate })
         
-        if sorted.count <= maxWaypoints {
-            return sorted.map {
-                Waypoint(coordinate: $0.location, photoCount: 1, photoIDs: [$0.id], dateRange: ($0.creationDate, $0.creationDate))
-            }
-        }
-        
-        var waypoints: [Waypoint] = []
-        var currentGroup: [PhotoAsset] = [sorted[0]]
-        
-        let chunkSize = max(1, Int(ceil(Double(sorted.count) / Double(maxWaypoints))))
+        // Pass 1: Coarse split by large gaps (> 4 hours OR > 10 km)
+        var coarseChunks: [[PhotoAsset]] = []
+        var currentChunk: [PhotoAsset] = [sorted[0]]
         
         for i in 1..<sorted.count {
-            if currentGroup.count < chunkSize {
-                currentGroup.append(sorted[i])
+            let prev = sorted[i - 1]
+            let curr = sorted[i]
+            
+            let timeDelta = curr.creationDate.timeIntervalSince(prev.creationDate)
+            let prevLoc = CLLocation(latitude: prev.location.latitude, longitude: prev.location.longitude)
+            let currLoc = CLLocation(latitude: curr.location.latitude, longitude: curr.location.longitude)
+            let distDelta = currLoc.distance(from: prevLoc)
+            
+            if timeDelta > 3600 * 4 || distDelta > 10000 {
+                // Major break, commit chunk
+                coarseChunks.append(currentChunk)
+                currentChunk = [curr]
             } else {
-                waypoints.append(createWaypoint(from: currentGroup))
-                currentGroup = [sorted[i]]
+                currentChunk.append(curr)
             }
         }
-        if !currentGroup.isEmpty {
-            waypoints.append(createWaypoint(from: currentGroup))
+        if !currentChunk.isEmpty {
+            coarseChunks.append(currentChunk)
         }
         
-        return waypoints
+        // Pass 2: Fine split for dense chunks (> 10 photos)
+        var finalWaypoints: [Waypoint] = []
+        
+        for chunk in coarseChunks {
+            if chunk.count <= 10 {
+                // Sparse chunk, use as-is
+                finalWaypoints.append(createWaypoint(from: chunk))
+            } else {
+                // Dense chunk (e.g. amusement park), apply fine-grained splitting
+                var fineChunk: [PhotoAsset] = [chunk[0]]
+                for i in 1..<chunk.count {
+                    let prev = chunk[i - 1]
+                    let curr = chunk[i]
+                    
+                    let timeDelta = curr.creationDate.timeIntervalSince(prev.creationDate)
+                    let prevLoc = CLLocation(latitude: prev.location.latitude, longitude: prev.location.longitude)
+                    let currLoc = CLLocation(latitude: curr.location.latitude, longitude: curr.location.longitude)
+                    let distDelta = currLoc.distance(from: prevLoc)
+                    
+                    // Fine threshold: 5 minutes OR 50 meters
+                    if timeDelta > 300 || distDelta > 50 {
+                        finalWaypoints.append(createWaypoint(from: fineChunk))
+                        fineChunk = [curr]
+                    } else {
+                        fineChunk.append(curr)
+                    }
+                }
+                if !fineChunk.isEmpty {
+                    finalWaypoints.append(createWaypoint(from: fineChunk))
+                }
+            }
+        }
+        
+        return finalWaypoints
     }
     
     private static func createWaypoint(from photos: [PhotoAsset]) -> Waypoint {
@@ -515,18 +580,11 @@ struct PhotoClusterMapView: UIViewRepresentable {
             splineCoords = context.coordinator.lastSplineCoords
         }
         
-        // --- Line Stroke Easing Function ---
-        // Simple cubic ease-in-out: slow start, faster middle, slow end
-        func eased(_ t: Double) -> Double {
-            return t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
-        }
-        // ONLY the line drawing gets eased, the camera progresses linearly as before
-        let strokeVisualProgress = eased(playbackProgress)
-        // -----------------------------------
+
         
         // 2. Hardware Accelerated stroke updates
         // Rebuild exact path substring. (strokeEnd uses geographic length, which misaligns with our array-index camera logic)
-        let targetIdxFloat = strokeVisualProgress * Double(max(0, splineCoords.count - 1))
+        let targetIdxFloat = playbackProgress * Double(max(0, splineCoords.count - 1))
         context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: targetIdxFloat)
         
         // 3. Dynamic Cinematic Follow Camera
@@ -626,7 +684,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 
                 let exactCurrentCoord = interpolateCoord(at: targetIdxFloat, in: splineCoords)
                 
-                let lookaheadSeconds = 3.0
+                let lookaheadSeconds = 0.8 // Tighter lookahead for faster localized sweeps
                 let lookaheadProgress = lookaheadSeconds / playbackDuration
                 let lookaheadIdxFloat = min(Double(pointCount - 1), targetIdxFloat + (lookaheadProgress * Double(pointCount - 1)))
                 let exactFutureCoord = interpolateCoord(at: lookaheadIdxFloat, in: splineCoords)
@@ -635,8 +693,8 @@ struct PhotoClusterMapView: UIViewRepresentable {
                     .distance(from: CLLocation(latitude: exactFutureCoord.latitude, longitude: exactFutureCoord.longitude))
                 
                 let baseAltitude: CLLocationDistance = 3000
-                let maxAltitude: CLLocationDistance = 2500000
-                let targetAltitude = min(maxAltitude, max(baseAltitude, dist * 2.2))
+                let maxAltitude: CLLocationDistance = 600000 // Raised cap to 600km to tolerate cross-city caching
+                let targetAltitude = min(maxAltitude, max(baseAltitude, dist * 1.5)) // Raised multiplier slightly for visual transfer
                 
                 let currentAlt = context.coordinator.currentAltitude ?? uiView.camera.altitude
                 let lerpFactor = isPlaying ? 0.04 : 0.2 // Slightly faster lerp so camera keeps up vertically
@@ -803,7 +861,7 @@ struct FootprintMapView: View {
     }
     
     private func recluster() {
-        let rawWaypoints = PhotoClusterer.clusterPhotos(filteredPhotos, targetDuration: engine.duration)
+        let rawWaypoints = PhotoClusterer.clusterPhotos(filteredPhotos)
         var unique: [Waypoint] = []
         for wp in rawWaypoints {
             if let last = unique.last {
@@ -815,6 +873,7 @@ struct FootprintMapView: View {
             }
         }
         waypoints = unique
+        engine.calculateDynamicDuration(for: unique)
     }
     
     private var timeCapsuleDateText: String {
