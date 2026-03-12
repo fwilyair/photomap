@@ -1,6 +1,11 @@
 name: FootprintMap
 options:
   bundleIdPrefix: com.seven
+packages:
+  MapboxMaps:
+    url: https://github.com/mapbox/mapbox-maps-ios.git
+    from: 11.0.0
+
 targets:
   FootprintMap:
     type: application
@@ -12,3 +17,6 @@ targets:
       properties:
         UILaunchScreen: {}
         NSPhotoLibraryUsageDescription: "需要相册访问权限以生成热力图"
+        MBXAccessToken: "pk.eyJ1IjoiZndpbHlhaXIiLCJhIjoiY2t2a2RrMm5zOTEyZzJ4cGd0NW5hZ3Q4ZyJ9.0O0AYCoxsOCcfc__Sr24VA"
+    dependencies:
+      - package: MapboxMaps

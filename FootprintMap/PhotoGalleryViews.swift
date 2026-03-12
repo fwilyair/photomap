@@ -205,7 +205,7 @@ struct MasonryGalleryView: View {
             set: { if !$0 { internalFullScreenID = nil } }
         )) {
             if let id = internalFullScreenID {
-                FullScreenPhotoView(photoID: id, thumbnailLoader: thumbnailLoader)
+                FullScreenPhotoView(photoIDs: photoIDs, initialPhotoID: id, thumbnailLoader: thumbnailLoader)
             }
         }
     }
@@ -214,30 +214,68 @@ struct MasonryGalleryView: View {
 // MARK: - Full Screen Photo Viewer
 
 struct FullScreenPhotoView: View {
-    let photoID: String
+    let photoIDs: [String]
+    let initialPhotoID: String
     let thumbnailLoader: ThumbnailLoader
     @Environment(\.dismiss) private var dismiss
-    @State private var fullImage: UIImage?
-    @State private var scale: CGFloat = 1.0
+    @State private var currentID: String
+    @State private var fullImages: [String: UIImage] = [:]
+    @State private var scales: [String: CGFloat] = [:]
+    
+    init(photoIDs: [String], initialPhotoID: String, thumbnailLoader: ThumbnailLoader) {
+        self.photoIDs = photoIDs
+        self.initialPhotoID = initialPhotoID
+        self.thumbnailLoader = thumbnailLoader
+        self._currentID = State(initialValue: initialPhotoID)
+    }
     
     var body: some View {
         ZStack {
+            // Tap background to dismiss
             Color.black.ignoresSafeArea()
+                .onTapGesture { dismiss() }
             
-            if let image = fullImage {
+            TabView(selection: $currentID) {
+                ForEach(photoIDs, id: \.self) { id in
+                    photoPage(for: id)
+                        .tag(id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: photoIDs.count > 1 ? .automatic : .never))
+            .indexViewStyle(.page(backgroundDisplayMode: .automatic))
+        }
+        .onAppear {
+            // Preload current and adjacent images
+            preloadImages(around: initialPhotoID)
+        }
+        .onChange(of: currentID) { _, newID in
+            preloadImages(around: newID)
+        }
+        .statusBarHidden()
+    }
+    
+    @ViewBuilder
+    private func photoPage(for id: String) -> some View {
+        let currentScale = scales[id] ?? 1.0
+        
+        ZStack {
+            Color.black // Fill each page
+                .onTapGesture { dismiss() }
+            
+            if let image = fullImages[id] {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .scaleEffect(scale)
+                    .scaleEffect(currentScale)
                     .gesture(
                         MagnifyGesture()
-                            .onChanged { value in scale = value.magnification }
-                            .onEnded { _ in withAnimation { scale = max(1.0, min(scale, 5.0)) } }
+                            .onChanged { value in scales[id] = value.magnification }
+                            .onEnded { _ in withAnimation { scales[id] = max(1.0, min(currentScale, 5.0)) } }
                     )
                     .onTapGesture(count: 2) {
-                        withAnimation { scale = scale > 1.0 ? 1.0 : 2.5 }
+                        withAnimation { scales[id] = currentScale > 1.0 ? 1.0 : 2.5 }
                     }
-            } else if let thumb = thumbnailLoader.thumbnails[photoID] {
+            } else if let thumb = thumbnailLoader.thumbnails[id] {
                 Image(uiImage: thumb)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -246,19 +284,19 @@ struct FullScreenPhotoView: View {
                 ProgressView().tint(.white)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .padding()
+    }
+    
+    private func preloadImages(around id: String) {
+        guard let idx = photoIDs.firstIndex(of: id) else { return }
+        let range = max(0, idx - 1)...min(photoIDs.count - 1, idx + 1)
+        for i in range {
+            let pid = photoIDs[i]
+            guard fullImages[pid] == nil else { continue }
+            thumbnailLoader.loadFullImage(for: pid) { image in
+                Task { @MainActor in
+                    if let image { fullImages[pid] = image }
+                }
             }
         }
-        .onAppear {
-            thumbnailLoader.loadFullImage(for: photoID) { image in
-                Task { @MainActor in self.fullImage = image }
-            }
-        }
-        .statusBarHidden()
     }
 }

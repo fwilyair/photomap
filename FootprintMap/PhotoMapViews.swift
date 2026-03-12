@@ -460,6 +460,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     var playbackDuration: TimeInterval
     var isPlaying: Bool
     var isPreparing: Bool
+    var mapType: MKMapType = .standard
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     
     class Coordinator: NSObject, MKMapViewDelegate {
@@ -512,6 +513,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
         mapView.delegate = context.coordinator
         mapView.showsUserLocation = true
         mapView.showsCompass = true
+        mapView.mapType = mapType
         mapView.showsScale = true
         mapView.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: .flat, emphasisStyle: .muted)
         
@@ -526,6 +528,10 @@ struct PhotoClusterMapView: UIViewRepresentable {
     func updateUIView(_ uiView: MKMapView, context: Context) {
         context.coordinator.isPlayingOrPreparing = isPlaying || isPreparing
         context.coordinator.onAnnotationSelected = onAnnotationSelected
+        
+        if uiView.mapType != mapType {
+            uiView.mapType = mapType
+        }
         
         let splineCoords: [CLLocationCoordinate2D]
         
@@ -713,8 +719,11 @@ struct PhotoClusterMapView: UIViewRepresentable {
 struct FootprintMapView: View {
     var photos: [PhotoAsset]
     
+    @Environment(\.dismiss) private var dismiss
     @State private var engine = PlaybackEngine()
     @State private var waypoints: [Waypoint] = []
+    @State private var mapStyleManager = MapStyleManager.shared
+    @State private var isShowingLayerPicker = false
     
     @State private var filteredPhotos: [PhotoAsset] = []
     
@@ -730,25 +739,46 @@ struct FootprintMapView: View {
     @State private var isShowingGallery = false
     @State private var galleryPhotoIDs: [String] = []
     @State private var fullScreenPhotoID: String?
+    @State private var fullScreenPhotoIDs: [String] = []
     
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Map Layer strictly observes progress implicitly
-            PhotoClusterMapView(
-                photos: filteredPhotos,
-                waypoints: waypoints,
-                playbackProgress: engine.progress,
-                playbackDuration: engine.duration,
-                isPlaying: engine.isPlaying,
-                isPreparing: engine.isPreparing,
-                onAnnotationSelected: { ids, point in
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                        selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+            // Map Layer — dual engine: Apple MapKit or Mapbox
+            if mapStyleManager.currentStyle.isApple {
+                PhotoClusterMapView(
+                    photos: filteredPhotos,
+                    waypoints: waypoints,
+                    playbackProgress: engine.progress,
+                    playbackDuration: engine.duration,
+                    isPlaying: engine.isPlaying,
+                    isPreparing: engine.isPreparing,
+                    mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
+                    onAnnotationSelected: { ids, point in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+                        }
+                        thumbnailLoader.loadThumbnails(for: ids)
                     }
-                    thumbnailLoader.loadThumbnails(for: ids)
-                }
-            )
-            .ignoresSafeArea(edges: [.bottom, .horizontal])
+                )
+                .ignoresSafeArea(edges: [.bottom, .horizontal])
+            } else if let styleURI = mapStyleManager.currentStyle.mapboxStyleURI {
+                MapboxMapWrapperView(
+                    photos: filteredPhotos,
+                    waypoints: waypoints,
+                    styleURI: styleURI,
+                    playbackProgress: engine.progress,
+                    playbackDuration: engine.duration,
+                    isPlaying: engine.isPlaying,
+                    isPreparing: engine.isPreparing,
+                    onAnnotationSelected: { ids, point in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+                        }
+                        thumbnailLoader.loadThumbnails(for: ids)
+                    }
+                )
+                .ignoresSafeArea(edges: [.bottom, .horizontal])
+            }
             
 
             
@@ -759,8 +789,9 @@ struct FootprintMapView: View {
                     screenPoint: selected.screenPoint,
                     thumbnailLoader: thumbnailLoader,
                     onPhotoTap: { id in
+                        fullScreenPhotoIDs = selected.photoIDs
                         fullScreenPhotoID = id
-                        thumbnailLoader.loadThumbnails(for: [id], size: CGSize(width: 800, height: 800))
+                        thumbnailLoader.loadThumbnails(for: selected.photoIDs, size: CGSize(width: 800, height: 800))
                     },
                     onMoreTap: {
                         galleryPhotoIDs = selected.photoIDs
@@ -777,21 +808,17 @@ struct FootprintMapView: View {
             
             playbackControls
         }
-        .navigationTitle("足迹轨道")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: { 
-                    filterBounceTrigger += 1
-                    isShowingFilter.toggle() 
-                }) {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .symbolEffect(.bounce, value: filterBounceTrigger)
-                }
-            }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .top) {
+            customNavigationBar
         }
         .sheet(isPresented: $isShowingFilter) {
             filterSheet
+        }
+        .sheet(isPresented: $isShowingLayerPicker) {
+            MapLayerPickerSheet(styleManager: mapStyleManager)
+                .presentationDetents([.fraction(0.75)])
         }
         .onAppear {
             let sortedParams = photos.sorted(by: { $0.creationDate < $1.creationDate })
@@ -841,7 +868,7 @@ struct FootprintMapView: View {
             set: { if !$0 { fullScreenPhotoID = nil } }
         )) {
             if let id = fullScreenPhotoID {
-                FullScreenPhotoView(photoID: id, thumbnailLoader: thumbnailLoader)
+                FullScreenPhotoView(photoIDs: fullScreenPhotoIDs, initialPhotoID: id, thumbnailLoader: thumbnailLoader)
             }
         }
     }
@@ -914,54 +941,134 @@ struct FootprintMapView: View {
         .presentationDetents([.medium])
     }
     
+    // Custom Navigation Bar to allow seamless fade transitions
+    @ViewBuilder
+    private var customNavigationBar: some View {
+        HStack {
+            // Back Button
+            Button(action: { dismiss() }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            
+            Spacer()
+            
+            // Title removed for minimalist look
+            
+            Spacer()
+            
+            // Right Actions
+            HStack(spacing: 8) {
+                Button(action: {
+                    isShowingLayerPicker = true
+                }) {
+                    Image(systemName: "map.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(.primary)
+                }
+                .frame(width: 44, height: 44)
+                
+                Button(action: {
+                    filterBounceTrigger += 1
+                    isShowingFilter.toggle()
+                }) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 18))
+                        .foregroundColor(.primary)
+                        .symbolEffect(.bounce, value: filterBounceTrigger)
+                }
+                .frame(width: 44, height: 44)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 44)
+        .background(
+            Color(UIColor.systemBackground)
+                .opacity(0.8)
+                .blur(radius: 10)
+                .ignoresSafeArea(edges: .top)
+        )
+        .opacity(engine.isPlaying || engine.isPreparing ? 0 : 1)
+        .animation(.easeInOut(duration: 0.35), value: engine.isPlaying || engine.isPreparing)
+        .allowsHitTesting(!(engine.isPlaying || engine.isPreparing))
+    }
+    
+    private var startDateText: String {
+        let fmtDay = DateFormatter()
+        fmtDay.dateFormat = "yy.MM.dd"
+        return fmtDay.string(from: startDate)
+    }
+    
+    private var endDateText: String {
+        let fmtDay = DateFormatter()
+        fmtDay.dateFormat = "yy.MM.dd"
+        return fmtDay.string(from: endDate)
+    }
+    
     // Playback UI Panel
     @ViewBuilder
     private var playbackControls: some View {
         // Redesigned UI: The Time Capsule
-        HStack(spacing: 20) {
+        HStack(spacing: 16) {
             // Left: Micro-Timeline
-            VStack(alignment: .leading, spacing: 6) {
-                // Date Text (Micro-Engraving Typography)
-                Text(timeCapsuleDateText)
-                    .font(.system(size: 13, weight: .light, design: .monospaced))
-                    .foregroundColor(.primary.opacity(0.8))
-                    .tracking(2.0)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                
-                // Custom Thin Timeline
-                GeometryReader { geo in
+            VStack(spacing: 4) {
+                // Progress Bar Zone
+                ZStack(alignment: .leading) {
+                    // Touch Capture
+                    GeometryReader { geo in
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        if selectedAnnotation != nil {
+                                            withAnimation(.spring()) { selectedAnnotation = nil }
+                                        }
+                                        let percentage = min(max(value.location.x / geo.size.width, 0.0), 1.0)
+                                        engine.seek(to: Double(percentage))
+                                    }
+                            )
+                    }
+                    
+                    // Visual Bar
                     ZStack(alignment: .leading) {
-                        // Background Track
                         Capsule()
-                            .fill(Color.gray.opacity(0.2))
+                            .fill(Color.gray.opacity(0.15))
                             .frame(height: 2)
                         
-                        // Active Track
                         Capsule()
                             .fill(Color.orange.opacity(0.8))
-                            .frame(width: max(0, geo.size.width * CGFloat(engine.progress)), height: 2)
-                            .shadow(color: .orange.opacity(0.5), radius: 2, x: 0, y: 0)
-                    }
-                    .contentShape(Rectangle()) // Make draggable
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                if selectedAnnotation != nil {
-                                    withAnimation(.spring()) { selectedAnnotation = nil }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .mask(
+                                GeometryReader { geo in
+                                    Rectangle()
+                                        .frame(width: geo.size.width * CGFloat(engine.progress))
                                 }
-                                let percentage = min(max(value.location.x / geo.size.width, 0.0), 1.0)
-                                engine.seek(to: Double(percentage))
-                            }
-                    )
+                            )
+                            .shadow(color: .orange.opacity(0.4), radius: 2, x: 0, y: 0)
+                    }
+                    .frame(height: 12)
                 }
-                .frame(height: 16) // Padding for touch area
+                .frame(height: 12) // Fix height for progress bar zone
+                
+                // Dates
+                HStack {
+                    Text(startDateText)
+                    Spacer()
+                    Text(endDateText)
+                }
+                .font(.system(size: 10, weight: .light, design: .monospaced))
+                .foregroundColor(.primary.opacity(0.5))
+                .tracking(1.0)
             }
+            .frame(height: 32)
             .padding(.leading, 8)
             
             // Right Control Cluster
-            HStack(spacing: 16) {
-                // Secondary Button: Stop (Only visible if progress > 0 or playing)
+            HStack(spacing: 12) {
+                // Secondary Button: Stop (Minimalist)
                 if !waypoints.isEmpty && (engine.isPlaying || engine.progress > 0) {
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -971,15 +1078,14 @@ struct FootprintMapView: View {
                         }
                     }) {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Color.gray.opacity(0.15)))
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary.opacity(0.8))
+                            .frame(width: 32, height: 32)
                     }
                     .transition(.scale.combined(with: .opacity))
                 }
                 
-                // Primary Button: The Breathing Orb
+                // Primary Button: Play/Pause (Minimalist)
                 Button(action: {
                     UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                     withAnimation(.interpolatingSpring(stiffness: 120, damping: 12)) {
@@ -987,31 +1093,11 @@ struct FootprintMapView: View {
                         engine.togglePlayPause()
                     }
                 }) {
-                    ZStack {
-                        // Base ring
-                        Circle()
-                            .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-                            .frame(width: 48, height: 48)
-                            .background(
-                                Circle().fill(Color.orange.opacity(engine.isPlaying ? 0.15 : 0.05))
-                            )
-                        
-                        // Breathing aura when playing
-                        if engine.isPlaying {
-                            Circle()
-                                .fill(Color.orange.opacity(0.3))
-                                .frame(width: 48, height: 48)
-                                .blur(radius: 8)
-                                .scaleEffect(1.2)
-                                .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: engine.isPlaying)
-                        }
-                        
-                        // Center icon
-                        Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 18, weight: .black))
-                            .foregroundColor(.orange)
-                            .contentTransition(.symbolEffect(.replace))
-                    }
+                    Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 32, height: 32)
                 }
                 .disabled(waypoints.isEmpty)
                 .opacity(waypoints.isEmpty ? 0.3 : 1.0)
@@ -1038,14 +1124,13 @@ struct FootprintMapView: View {
 
 class WaypointAnnotationView: MKAnnotationView {
     private let countLabel = UILabel()
-    private let blurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterialLight))
-    private let borderView = UIView()
+    private let bubbleView = UIView()
     
     override var annotation: MKAnnotation? {
         didSet {
             guard let wpAnn = annotation as? WaypointAnnotation else { return }
             countLabel.text = "\(wpAnn.count)"
-            updateSize(for: wpAnn.count)
+            updateLayout(for: wpAnn.count)
         }
     }
     
@@ -1062,40 +1147,152 @@ class WaypointAnnotationView: MKAnnotationView {
     private func setupView() {
         backgroundColor = .clear
         
-        blurView.clipsToBounds = true
+        // Solid Orange Dot
+        bubbleView.backgroundColor = UIColor(red: 0.92, green: 0.43, blue: 0.12, alpha: 1.0) // Similar to #EB6E1F, solid orange
+        bubbleView.clipsToBounds = true
+        bubbleView.layer.borderColor = UIColor.white.cgColor
+        bubbleView.layer.borderWidth = 2.0
         
-        borderView.layer.borderColor = UIColor.white.cgColor // Pure white solid border
-        borderView.layer.borderWidth = 2.0 // Slightly thicker
-        borderView.isUserInteractionEnabled = false
-        
-        self.layer.shadowColor = UIColor.black.cgColor
-        self.layer.shadowOpacity = 0.15
-        self.layer.shadowOffset = CGSize(width: 0, height: 4)
-        self.layer.shadowRadius = 10
-        
-        countLabel.textColor = UIColor.systemOrange // Matching theme color
-        countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold) // Bold for better readability
+        // Count label
+        countLabel.textColor = .white
+        countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold)
         countLabel.textAlignment = .center
         
-        addSubview(blurView)
-        blurView.contentView.addSubview(countLabel)
-        addSubview(borderView)
+        addSubview(bubbleView)
+        bubbleView.addSubview(countLabel)
         
         self.collisionMode = .circle
+        self.layer.shadowOpacity = 0 // Explicitly no shadow to keep it ultra minimalistic
     }
     
-    private func updateSize(for count: Int) {
-        let size: CGFloat = count > 99 ? 36 : 28
-        self.frame = CGRect(x: 0, y: 0, width: size, height: size)
+    private func updateLayout(for count: Int) {
+        let text = "\(count)"
+        let horizontalPadding: CGFloat = text.count > 2 ? 8 : 4
+        let bubbleHeight: CGFloat = 28
+        let minBubbleWidth: CGFloat = 28
         
-        blurView.frame = self.bounds
-        blurView.layer.cornerRadius = size / 2
+        // Calculate width based on text
+        let textSize = (text as NSString).size(withAttributes: [.font: countLabel.font!])
+        let bubbleWidth = max(minBubbleWidth, textSize.width + horizontalPadding * 2)
         
-        borderView.frame = self.bounds
-        borderView.layer.cornerRadius = size / 2
+        self.frame = CGRect(x: 0, y: 0, width: bubbleWidth, height: bubbleHeight)
         
+        // Bubble
+        bubbleView.frame = self.bounds
+        bubbleView.layer.cornerRadius = bubbleHeight / 2
+        
+        // Label
         countLabel.frame = self.bounds
         
+        // Center offset so the very center of the dot is at the exact coordinate
         self.centerOffset = .zero
+    }
+}
+
+// MARK: - Map Layer Picker Sheet
+
+struct MapLayerPickerSheet: View {
+    @Bindable var styleManager: MapStyleManager
+    @Environment(\.dismiss) private var dismiss
+    
+    let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    var allStyles: [MapStyleOption] {
+        MapStyleOption.appleStyles + MapStyleOption.mapboxStyles
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(allStyles) { style in
+                        BentoLayerCard(style: style, isSelected: styleManager.currentStyle == style) {
+                            styleManager.currentStyle = style
+                            // Add a tiny delay so the user feels the selection feedback
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                dismiss()
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("地图风格")
+            .navigationBarTitleDisplayMode(.inline)
+            .background(Color(UIColor.systemGroupedBackground))
+        }
+    }
+}
+
+// MARK: - Bento Grid Components
+
+struct BentoLayerCard: View {
+    let style: MapStyleOption
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 0) {
+                // Style Sample (Visual representation from Assets)
+                ZStack {
+                    StyleBackgroundView(style: style)
+                    
+                    if isSelected {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(6)
+                    }
+                }
+                .frame(height: 84)
+                .clipped()
+                
+                // Footer (Text only)
+                Text(style.displayName)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? Color.orange : Color.clear, lineWidth: 2)
+            )
+            .shadow(color: Color.black.opacity(isSelected ? 0.08 : 0.04), radius: isSelected ? 8 : 4, x: 0, y: isSelected ? 4 : 2)
+            .scaleEffect(isSelected ? 1.02 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct StyleBackgroundView: View {
+    let style: MapStyleOption
+    
+    var body: some View {
+        GeometryReader { geo in
+            Image(style.rawValue)
+                .resizable()
+                .scaledToFill()
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                // Placeholder background while assets are missing
+                .background(Color(UIColor.systemGray5))
+        }
     }
 }
