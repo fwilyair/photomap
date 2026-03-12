@@ -1034,12 +1034,12 @@ struct FootprintMapView: View {
                     
                     // Visual Bar
                     ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.gray.opacity(0.15))
-                            .frame(height: 2)
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.08))
+                            .frame(height: 1.0)
                         
-                        Capsule()
-                            .fill(Color.orange.opacity(0.8))
+                        Rectangle()
+                            .fill(Color.orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .mask(
                                 GeometryReader { geo in
@@ -1047,7 +1047,7 @@ struct FootprintMapView: View {
                                         .frame(width: geo.size.width * CGFloat(engine.progress))
                                 }
                             )
-                            .shadow(color: .orange.opacity(0.4), radius: 2, x: 0, y: 0)
+                            .frame(height: 1.0)
                     }
                     .frame(height: 12)
                 }

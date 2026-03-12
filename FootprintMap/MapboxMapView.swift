@@ -1,5 +1,7 @@
 import SwiftUI
 import MapboxMaps
+import CoreLocation
+import UIKit
 
 // MARK: - Mapbox Map View (UIViewRepresentable)
 
@@ -14,7 +16,30 @@ struct MapboxMapWrapperView: UIViewRepresentable {
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     
     func makeUIView(context: Context) -> MapView {
+        var cameraOptions: CameraOptions? = nil
+        if !waypoints.isEmpty {
+            // Use camera(for:...) to get a proper initial fit centered on the waypoints and the spline
+            let splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
+            var allCoords = splineCoords
+            allCoords.append(contentsOf: waypoints.map { $0.coordinate })
+            
+            // Temporary dummy MapView to calculate the correct camera without displaying it
+            let dummyMap = MapView(frame: UIScreen.main.bounds)
+            cameraOptions = dummyMap.mapboxMap.camera(
+                for: allCoords,
+                padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                bearing: nil,
+                pitch: nil
+            )
+            
+            // Clamp initial zoom to 14 if it's too tight (matching MapKit's 50k units feel)
+            if let z = cameraOptions?.zoom, z > 14.0 {
+                cameraOptions?.zoom = 14.0
+            }
+        }
+
         let options = MapInitOptions(
+            cameraOptions: cameraOptions,
             styleURI: StyleURI(rawValue: styleURI)
         )
         let mapView = MapView(frame: .zero, mapInitOptions: options)
@@ -38,6 +63,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
             mapView: mapView,
             waypoints: waypoints,
             playbackProgress: playbackProgress,
+            playbackDuration: playbackDuration,
             isPreparing: isPreparing,
             isPlaying: isPlaying
         )
@@ -73,6 +99,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
             mapView: MapView,
             waypoints: [Waypoint],
             playbackProgress: Double,
+            playbackDuration: TimeInterval,
             isPreparing: Bool,
             isPlaying: Bool
         ) {
@@ -121,27 +148,32 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                 }
                 pointAnnotationManager?.annotations = pointAnnotations
                 
-                // Fit bounds
+                // Fit bounds precisely on first appear
                 if !didInitialFit && (!splineCoords.isEmpty || !waypoints.isEmpty) {
                     didInitialFit = true
+                    
+                    var allCoords = splineCoords
+                    allCoords.append(contentsOf: waypoints.map { $0.coordinate })
+                    
+                    var camera = mapView.mapboxMap.camera(
+                        for: allCoords,
+                        padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                        bearing: nil,
+                        pitch: nil
+                    )
+                    
+                    if let z = camera.zoom, z > 14.0 {
+                        camera.zoom = 14.0 
+                    }
+                    
+                    // Match MapKit's 0.3s delay before performing the initial fit
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        var allCoords = splineCoords
-                        allCoords.append(contentsOf: waypoints.map { $0.coordinate })
+                        // First, teleport instantly to the location but slightly zoomed out (subtle dive)
+                        let diveHeightCamera = CameraOptions(center: camera.center, zoom: (camera.zoom ?? 12.0) - 1.5)
+                        mapView.mapboxMap.setCamera(to: diveHeightCamera)
                         
-                        var camera = mapView.mapboxMap.camera(
-                            for: allCoords,
-                            padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
-                            bearing: nil,
-                            pitch: nil
-                        )
-                        
-                        // MapKit code limits the minimum zoom rect size to MKMapPoint 50000 
-                        // To match the default scaled-out feel in MapKit, we cap the zoom
-                        if let z = camera.zoom, z > 12.0 {
-                            camera.zoom = 12.0 
-                        }
-                        
-                        mapView.camera.ease(to: camera, duration: 0.8)
+                        // Then, dive in smoothly to the final zoom level
+                        mapView.camera.ease(to: camera, duration: 1.2)
                     }
                 }
             } else {
@@ -151,6 +183,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
             // 2. Playback state changes
             if lastProgress != playbackProgress || lastIsPreparing != isPreparing {
                 let justRewoundToZero = playbackProgress == 0.0 && lastProgress > 0.0
+                let justEnded = playbackProgress == 1.0 && lastProgress < 1.0
                 let justStartedPreparing = isPreparing && !lastIsPreparing
                 
                 let pointCount = splineCoords.count
@@ -191,6 +224,13 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                         }
                     }
                     
+                    // Helper: Convert MapKit altitude to Mapbox zoom level for exact visual match
+                    func altitudeToZoom(altitude: Double, latitude: Double) -> Double {
+                        // Formula to match MapKit visual height: log2(100,000,000 * cos(lat) / altitude)
+                        let cosLat = cos(latitude * .pi / 180.0)
+                        return log2(100000000.0 * cosLat / max(1.0, altitude))
+                    }
+                    
                     if currentPath.count >= 2 {
                         var polyline = PolylineAnnotation(lineCoordinates: currentPath)
                         polyline.lineColor = StyleColor(UIColor.systemOrange)
@@ -211,38 +251,78 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                             pitch: mapView.mapboxMap.cameraState.pitch
                         )
                         if let startCoord = splineCoords.first {
+                            // Match MapKit: Look ahead 3 seconds to determine initial altitude
+                            let lookaheadSeconds = 3.0
+                            let lookaheadProgress = lookaheadSeconds / playbackDuration
+                            let lookaheadIdxFloat = min(Double(splineCoords.count - 1), lookaheadProgress * Double(splineCoords.count - 1))
+                            let exactFutureCoord = interpolateCoord(at: lookaheadIdxFloat, in: splineCoords)
+                            
+                            let dist = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
+                                .distance(from: CLLocation(latitude: exactFutureCoord.latitude, longitude: exactFutureCoord.longitude))
+                            
+                            let targetAltitude = min(2500000.0, max(3000.0, dist * 2.2))
+                            let targetZoom = altitudeToZoom(altitude: targetAltitude, latitude: startCoord.latitude)
+                            
                             let newCamera = CameraOptions(
                                 center: startCoord,
-                                zoom: 14.0,
+                                zoom: targetZoom,
                                 bearing: 0,
                                 pitch: 0
                             )
                             mapView.camera.ease(to: newCamera, duration: 1.8)
                         }
-                    } else if justRewoundToZero {
-                        if let cam = initialCamera {
-                            mapView.camera.ease(to: cam, duration: 1.5)
-                        } else if !splineCoords.isEmpty {
-                            var allCoords = splineCoords
-                            allCoords.append(contentsOf: waypoints.map { $0.coordinate })
-                            var camera = mapView.mapboxMap.camera(
-                                for: allCoords,
-                                padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
-                                bearing: nil,
-                                pitch: nil
-                            )
-                            if let z = camera.zoom, z > 12.0 {
-                                camera.zoom = 12.0
+                    } else if justRewoundToZero || justEnded {
+                        let zoomOut = { [weak self] in
+                            guard let self = self, let mapView = self.mapView else { return }
+                            
+                            if let cam = self.initialCamera {
+                                // Match MapKit: 3.5s smooth flight back for natural finish, fast for manual
+                                mapView.camera.ease(to: cam, duration: justEnded ? 3.5 : 1.5)
+                            } else if !splineCoords.isEmpty {
+                                var allCoords = splineCoords
+                                allCoords.append(contentsOf: waypoints.map { $0.coordinate })
+                                var camera = mapView.mapboxMap.camera(
+                                    for: allCoords,
+                                    padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                                    bearing: nil,
+                                    pitch: nil
+                                )
+                                if let z = camera.zoom, z > 14.0 {
+                                    camera.zoom = 14.0
+                                }
+                                mapView.camera.ease(to: camera, duration: justEnded ? 3.5 : 1.5)
                             }
-                            mapView.camera.ease(to: camera, duration: 1.5)
+                        }
+                        
+                        if justEnded {
+                            // Match MapKit: 0.5 second post-playback delay
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                zoomOut()
+                            }
+                        } else {
+                            zoomOut()
                         }
                     } else if isPlaying, pointCount > 1 {
                         let exactCurrentCoord = interpolateCoord(at: targetIdxFloat, in: splineCoords)
                         
-                        let currentCamera = mapView.mapboxMap.cameraState
-                        let zoom = currentCamera.zoom
-                        let targetZoom = 14.5
-                        let smoothedZoom = zoom + (targetZoom - zoom) * 0.03
+                        // Match MapKit Cinematic Flight Logic:
+                        // 1. Look ahead for terrain/speed based altitude
+                        let lookaheadSeconds = 0.8
+                        let lookaheadProgress = lookaheadSeconds / playbackDuration
+                        let lookaheadIdxFloat = min(Double(pointCount - 1), targetIdxFloat + (lookaheadProgress * Double(pointCount - 1)))
+                        let exactFutureCoord = interpolateCoord(at: lookaheadIdxFloat, in: splineCoords)
+                        
+                        let dist = CLLocation(latitude: exactCurrentCoord.latitude, longitude: exactCurrentCoord.longitude)
+                            .distance(from: CLLocation(latitude: exactFutureCoord.latitude, longitude: exactFutureCoord.longitude))
+                        
+                        // MapKit formula: min(600k, max(3000, dist * 1.5))
+                        let targetAltitude = min(600000.0, max(3000.0, dist * 1.5))
+                        let targetZoom = altitudeToZoom(altitude: targetAltitude, latitude: exactCurrentCoord.latitude)
+                        
+                        // 2. Smooth LERP for altitude zoom transition
+                        let currentZoom = mapView.mapboxMap.cameraState.zoom
+                        let lerpFactor = 0.04 // Exact match to MapKit's isPlaying lerp
+                        let smoothedZoom = currentZoom + (targetZoom - currentZoom) * lerpFactor
                         
                         let newCamera = CameraOptions(
                             center: exactCurrentCoord,
@@ -250,6 +330,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                             bearing: 0,
                             pitch: 0
                         )
+                        // Precise 0.1s step for continuous motion
                         mapView.camera.ease(to: newCamera, duration: 0.1)
                     }
                 }
