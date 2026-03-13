@@ -18,7 +18,6 @@ struct MapboxMapWrapperView: UIViewRepresentable {
     func makeUIView(context: Context) -> MapView {
         var cameraOptions: CameraOptions? = nil
         if !waypoints.isEmpty {
-            // Use camera(for:...) to get a proper initial fit centered on the waypoints and the spline
             let splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
             var allCoords = splineCoords
             allCoords.append(contentsOf: waypoints.map { $0.coordinate })
@@ -27,14 +26,14 @@ struct MapboxMapWrapperView: UIViewRepresentable {
             let dummyMap = MapView(frame: UIScreen.main.bounds)
             cameraOptions = dummyMap.mapboxMap.camera(
                 for: allCoords,
-                padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                padding: UIEdgeInsets(top: 40, left: 10, bottom: 120, right: 10),
                 bearing: nil,
                 pitch: nil
             )
             
-            // Clamp initial zoom to 14 if it's too tight (matching MapKit's 50k units feel)
-            if let z = cameraOptions?.zoom, z > 14.0 {
-                cameraOptions?.zoom = 14.0
+            // Aggressively boost zoom by +0.8 to match MapKit's tighter feel
+            if let currentZoom = cameraOptions?.zoom {
+                cameraOptions?.zoom = min(22.0, currentZoom + 0.8)
             }
         }
 
@@ -47,12 +46,19 @@ struct MapboxMapWrapperView: UIViewRepresentable {
         
         mapView.ornaments.scaleBarView.isHidden = true
         mapView.ornaments.compassView.isHidden = false
+        mapView.ornaments.attributionButton.isHidden = true
+        mapView.ornaments.logoView.isHidden = true
         
         context.coordinator.mapView = mapView
         return mapView
     }
     
     func updateUIView(_ mapView: MapView, context: Context) {
+        // Force hide ornaments every update using public isHidden property
+        mapView.ornaments.attributionButton.isHidden = true
+        mapView.ornaments.logoView.isHidden = true
+        mapView.ornaments.scaleBarView.isHidden = true
+        
         if mapView.mapboxMap.styleURI?.rawValue != styleURI {
             mapView.mapboxMap.styleURI = StyleURI(rawValue: styleURI)
         }
@@ -85,11 +91,13 @@ struct MapboxMapWrapperView: UIViewRepresentable {
         private var polylineAnnotationManager: PolylineAnnotationManager? // Top: Trajectory line
         
         // Cache for rendered images to avoid expensive rendering
-        private var iconCache: [Int: UIImage] = [:]
+        private var iconCache: [Int: UIImage] = [:]  // filled (passed)
+        private var hollowIconCache: [Int: UIImage] = [:]  // hollow (unpassed)
         
         private var lastWaypoints: [Waypoint] = []
         private var waypointLookup: [(coordinate: CLLocationCoordinate2D, photoIDs: [String])] = []
         private var lastSplineCoords: [CLLocationCoordinate2D] = []
+        private var waypointSplineIndices: [Int] = [] // Maps waypoint to spline index
         private var lastProgress: Double = -1.0
         private var lastIsPreparing = false
         private var didInitialFit = false
@@ -103,85 +111,106 @@ struct MapboxMapWrapperView: UIViewRepresentable {
             isPreparing: Bool,
             isPlaying: Bool
         ) {
-            // Lazy init managers — ORDER determines Z-order on GL canvas
-            // Points (bottom) -> Polyline (top)
+            // Lazy init managers — ORDER determines Z-order on GL canvas (first created is bottom)
+            // Polyline (bottom) -> Points (top)
+            if polylineAnnotationManager == nil {
+                polylineAnnotationManager = mapView.annotations.makePolylineAnnotationManager()
+            }
             if pointAnnotationManager == nil {
                 pointAnnotationManager = mapView.annotations.makePointAnnotationManager()
                 pointAnnotationManager?.delegate = self
             }
-            if polylineAnnotationManager == nil {
-                polylineAnnotationManager = mapView.annotations.makePolylineAnnotationManager()
-            }
             
             let splineCoords: [CLLocationCoordinate2D]
+            let waypointsChanged = lastWaypoints != waypoints
             
             // 1. Data changes (waypoints change)
-            if lastWaypoints != waypoints {
+            if waypointsChanged {
                 lastWaypoints = waypoints
                 let newSplineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
                 splineCoords = newSplineCoords
                 lastSplineCoords = splineCoords
                 
-                // Build Point Annotations using rendered SwiftUI views as icons
-                // This ensures the trajectory line (on canvas) can be rendered ON TOP of the waypoints
+                // Precompute waypoint to spline indices for sync
+                waypointSplineIndices = waypoints.map { wp in
+                    var bestIdx = 0
+                    var bestDist = Double.greatestFiniteMagnitude
+                    for (i, sc) in splineCoords.enumerated() {
+                        let d = pow(sc.latitude - wp.coordinate.latitude, 2) + pow(sc.longitude - wp.coordinate.longitude, 2)
+                        if d < bestDist { bestDist = d; bestIdx = i }
+                    }
+                    return bestIdx
+                }
+                
+                // Build Point Annotations for all waypoints
                 var pointAnnotations: [PointAnnotation] = []
-                for wp in waypoints {
+                
+                for (index, wp) in waypoints.enumerated() {
                     var point = PointAnnotation(id: wp.photoIDs.joined(), coordinate: wp.coordinate)
                     
-                    // Render image if not in cache
+                    // Render filled icon if not in cache
                     let count = wp.photoCount
                     if iconCache[count] == nil {
-                        let renderer = ImageRenderer(content: WaypointClusterIcon(count: count))
+                        let renderer = ImageRenderer(content: WaypointClusterIcon(count: count, isFilled: true))
                         renderer.scale = UIScreen.main.scale
                         if let image = renderer.uiImage {
                             iconCache[count] = image
                         }
                     }
+                    // Render hollow icon if not in cache
+                    if hollowIconCache[count] == nil {
+                        let renderer = ImageRenderer(content: WaypointClusterIcon(count: count, isFilled: false))
+                        renderer.scale = UIScreen.main.scale
+                        if let image = renderer.uiImage {
+                            hollowIconCache[count] = image
+                        }
+                    }
                     
-                    if let image = iconCache[count] {
-                        point.image = .init(image: image, name: "wp_\(count)")
+                    // Default: all hollow (no playback yet)
+                    if let image = hollowIconCache[count] {
+                        point.image = .init(image: image, name: "wp_hollow_\(count)")
                     }
                     
                     point.iconAnchor = .center
-                    point.userInfo = ["photoIDs": wp.photoIDs]
+                    point.userInfo = ["photoIDs": wp.photoIDs, "waypointIndex": index, "isPassed": false]
                     pointAnnotations.append(point)
                 }
                 pointAnnotationManager?.annotations = pointAnnotations
                 
-                // Fit bounds precisely on first appear
-                if !didInitialFit && (!splineCoords.isEmpty || !waypoints.isEmpty) {
-                    didInitialFit = true
-                    
+                // Data-driven Camera Fit: Fix bounds both on first appear AND when filter changes
+                let shouldFit = !didInitialFit || !isPlaying
+                
+                if shouldFit && (!splineCoords.isEmpty || !waypoints.isEmpty) {
                     var allCoords = splineCoords
                     allCoords.append(contentsOf: waypoints.map { $0.coordinate })
                     
                     var camera = mapView.mapboxMap.camera(
                         for: allCoords,
-                        padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                        padding: UIEdgeInsets(top: 40, left: 10, bottom: 120, right: 10),
                         bearing: nil,
                         pitch: nil
                     )
                     
-                    if let z = camera.zoom, z > 14.0 {
-                        camera.zoom = 14.0 
+                    // Apply +0.8 boost to counteract Mapbox's conservative camera calculation
+                    if let currentZoom = camera.zoom {
+                        camera.zoom = min(22.0, currentZoom + 0.8)
                     }
                     
-                    // Match MapKit's 0.3s delay before performing the initial fit
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // First, teleport instantly to the location but slightly zoomed out (subtle dive)
-                        let diveHeightCamera = CameraOptions(center: camera.center, zoom: (camera.zoom ?? 12.0) - 1.5)
-                        mapView.mapboxMap.setCamera(to: diveHeightCamera)
-                        
-                        // Then, dive in smoothly to the final zoom level
-                        mapView.camera.ease(to: camera, duration: 1.2)
+                    if !didInitialFit {
+                        didInitialFit = true
+                        // Use setCamera for instant teleport to the target bounds
+                        mapView.mapboxMap.setCamera(to: camera)
+                    } else {
+                        // Filter update: Smooth transition to new bounds
+                        mapView.camera.ease(to: camera, duration: 1.0)
                     }
                 }
             } else {
                 splineCoords = lastSplineCoords
             }
             
-            // 2. Playback state changes
-            if lastProgress != playbackProgress || lastIsPreparing != isPreparing {
+            // 2. Playback state or Data changes
+            if lastProgress != playbackProgress || lastIsPreparing != isPreparing || waypointsChanged {
                 let justRewoundToZero = playbackProgress == 0.0 && lastProgress > 0.0
                 let justEnded = playbackProgress == 1.0 && lastProgress < 1.0
                 let justStartedPreparing = isPreparing && !lastIsPreparing
@@ -200,13 +229,16 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
                     }
                     
-                    let targetIdxFloat = playbackProgress * Double(pointCount - 1)
+                    // Respect current progress even when not playing (paused state).
+                    let effectiveProgress = playbackProgress
+                    
+                    let targetIdxFloat = effectiveProgress * Double(pointCount - 1)
                     let targetIdxInt = Int(floor(targetIdxFloat))
                     
                     // Build precise polyline path
                     var currentPath: [CLLocationCoordinate2D] = []
                     
-                    if targetIdxFloat > 0 {
+                    if effectiveProgress > 0 {
                         if targetIdxInt > 0 {
                             currentPath.append(contentsOf: splineCoords[0...targetIdxInt])
                         } else {
@@ -226,9 +258,9 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                     
                     // Helper: Convert MapKit altitude to Mapbox zoom level for exact visual match
                     func altitudeToZoom(altitude: Double, latitude: Double) -> Double {
-                        // Formula to match MapKit visual height: log2(100,000,000 * cos(lat) / altitude)
+                        // Aggressive match to MapKit: Increase to 120,000,000
                         let cosLat = cos(latitude * .pi / 180.0)
-                        return log2(100000000.0 * cosLat / max(1.0, altitude))
+                        return log2(120000000.0 * cosLat / max(1.0, altitude))
                     }
                     
                     if currentPath.count >= 2 {
@@ -240,6 +272,48 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                         polylineAnnotationManager?.annotations = [polyline]
                     } else {
                         polylineAnnotationManager?.annotations = []
+                    }
+                    
+                    // Update waypoint icons: filled for passed, hollow for unpassed
+                    let wpCount = lastWaypoints.count
+                    if wpCount > 0, var annotations = pointAnnotationManager?.annotations {
+                        let targetIdxFloat = playbackProgress * Double(max(0, splineCoords.count - 1))
+                        var didChange = false
+                        
+                        for i in 0..<annotations.count {
+                            guard let wpIndex = annotations[i].userInfo?["waypointIndex"] as? Int else { continue }
+                            
+                            let isPassed: Bool
+                            if wpIndex < waypointSplineIndices.count {
+                                let wpSplineIdx = Double(waypointSplineIndices[wpIndex])
+                                isPassed = playbackProgress > 0 && targetIdxFloat >= wpSplineIdx
+                            } else {
+                                let wpProgress = wpCount > 1 ? Double(wpIndex) / Double(wpCount - 1) : 0.0
+                                isPassed = playbackProgress > 0 && playbackProgress >= wpProgress
+                            }
+                            
+                            // Check if state actually changed before updating image
+                            let currentState = (annotations[i].userInfo?["isPassed"] as? Bool) ?? false
+                            if currentState != isPassed || annotations[i].image == nil {
+                                let count = lastWaypoints[wpIndex].photoCount
+                                if isPassed, let image = iconCache[count] {
+                                    annotations[i].image = .init(image: image, name: "wp_filled_\(count)")
+                                } else if !isPassed, let image = hollowIconCache[count] {
+                                    annotations[i].image = .init(image: image, name: "wp_hollow_\(count)")
+                                }
+                                
+                                // Update stored state
+                                var userInfo = annotations[i].userInfo ?? [:]
+                                userInfo["isPassed"] = isPassed
+                                annotations[i].userInfo = userInfo
+                                didChange = true
+                            }
+                        }
+                        
+                        // ONLY re-assign if something actually changed to avoid GL flicker
+                        if didChange {
+                            pointAnnotationManager?.annotations = annotations
+                        }
                     }
                     
                     // Cinematic camera
@@ -283,12 +357,13 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                                 allCoords.append(contentsOf: waypoints.map { $0.coordinate })
                                 var camera = mapView.mapboxMap.camera(
                                     for: allCoords,
-                                    padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
+                                    padding: UIEdgeInsets(top: 40, left: 10, bottom: 120, right: 10),
                                     bearing: nil,
                                     pitch: nil
                                 )
-                                if let z = camera.zoom, z > 14.0 {
-                                    camera.zoom = 14.0
+                                // Apply +0.8 boost on zoom out/fit bounds as well
+                                if let currentZoom = camera.zoom {
+                                    camera.zoom = min(22.0, currentZoom + 0.8)
                                 }
                                 mapView.camera.ease(to: camera, duration: justEnded ? 3.5 : 1.5)
                             }
@@ -359,27 +434,32 @@ extension MapboxMapWrapperView.Coordinator: AnnotationInteractionDelegate {
 
 struct WaypointClusterIcon: View {
     let count: Int
+    var isFilled: Bool = true
+    
+    private let orangeColor = Color(red: 0.92, green: 0.43, blue: 0.12)
     
     var body: some View {
         ZStack {
-            // Background orange circle
-            Circle()
-                .fill(Color(red: 0.92, green: 0.43, blue: 0.12))
+            if isFilled {
+                // Filled: orange background
+                Circle()
+                    .fill(orangeColor)
+                Circle()
+                    .strokeBorder(Color.white, lineWidth: 2.0)
+            } else {
+                // Hollow: white background, orange border
+                Circle()
+                    .fill(Color.white)
+                Circle()
+                    .strokeBorder(orangeColor, lineWidth: 2.0)
+            }
             
-            // White stroke - using strokeBorder ensures it stays inside the frame perfectly
-            Circle()
-                .strokeBorder(Color.white, lineWidth: 2.0)
-            
-            // Photo count text
             Text("\(count)")
                 .font(.system(size: count > 9 ? 12 : 14, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(isFilled ? .white : orangeColor)
         }
         .frame(width: count > 9 ? 30 : 26, height: count > 9 ? 30 : 26)
-        // Add subtle shadow for depth
         .shadow(color: .black.opacity(0.25), radius: 2, x: 0, y: 1)
-        // CRITICAL: Add padding to prevent edge clipping during ImageRenderer snapshot
-        // This ensures super-smooth anti-aliased edges on the GL canvas
         .padding(4)
     }
 }

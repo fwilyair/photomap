@@ -55,6 +55,7 @@ struct Waypoint: Identifiable, Equatable {
     let photoCount: Int
     let photoIDs: [String]
     let dateRange: (start: Date, end: Date)
+    let isStayPoint: Bool
     
     static func == (lhs: Waypoint, rhs: Waypoint) -> Bool {
         lhs.id == rhs.id
@@ -66,12 +67,14 @@ class WaypointAnnotation: NSObject, MKAnnotation {
     var id: String
     var count: Int
     var photoIDs: [String]
+    var waypointIndex: Int
     
-    init(waypoint: Waypoint) {
+    init(waypoint: Waypoint, index: Int) {
         self.coordinate = waypoint.coordinate
         self.id = waypoint.id.uuidString
         self.count = waypoint.photoCount
         self.photoIDs = waypoint.photoIDs
+        self.waypointIndex = index
         super.init()
     }
 }
@@ -330,8 +333,21 @@ class SplineLayerManager {
         shapeLayer.strokeEnd = 1.0 // Fully draw whatever path is assigned
     }
     
-    func updatePath(for splineCoords: [CLLocationCoordinate2D], in mapView: MKMapView, progressIndex: Double) {
-        guard splineCoords.count > 1, progressIndex > 0 else {
+    func updatePath(for splineCoords: [CLLocationCoordinate2D], in mapView: MKMapView, progressIndex: Double, isPlaying: Bool, isPreparing: Bool) {
+        // Respect current progress even when not playing (paused state).
+        // Total path will naturally show when progressIndex reaches the end.
+        let effectiveProgress = progressIndex
+        
+        guard splineCoords.count > 1 else {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            shapeLayer.path = nil
+            CATransaction.commit()
+            return
+        }
+        
+        // If progress is 0, we still want to clear the path if it was previously drawn
+        if effectiveProgress <= 0 {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             shapeLayer.path = nil
@@ -346,14 +362,14 @@ class SplineLayerManager {
         let firstCGPoint = mapView.convert(splineCoords[0], toPointTo: mapView)
         path.move(to: firstCGPoint)
         
-        let maxIndex = min(splineCoords.count - 1, Int(ceil(progressIndex)))
+        let maxIndex = min(splineCoords.count - 1, Int(ceil(effectiveProgress)))
         if maxIndex > 0 {
             for i in 1...maxIndex {
                 if i == maxIndex {
                     // Precise interpolation of the tip of the line
                     let prev = splineCoords[i - 1]
                     let curr = splineCoords[i]
-                    let remainder = progressIndex - Double(i - 1)
+                    let remainder = effectiveProgress - Double(i - 1)
                     let lat = prev.latitude + (curr.latitude - prev.latitude) * remainder
                     let lon = prev.longitude + (curr.longitude - prev.longitude) * remainder
                     let exactEnd = CLLocationCoordinate2D(latitude: lat, longitude: lon)
@@ -406,10 +422,11 @@ struct PhotoClusterer {
         // Pass 2: Fine split for dense chunks (> 10 photos)
         var finalWaypoints: [Waypoint] = []
         
-        for chunk in coarseChunks {
+        for (index, chunk) in coarseChunks.enumerated() {
+            let isFirstOrLast = index == 0 || index == coarseChunks.count - 1
             if chunk.count <= 10 {
-                // Sparse chunk, use as-is
-                finalWaypoints.append(createWaypoint(from: chunk))
+                // Sparse chunk
+                finalWaypoints.append(createWaypoint(from: chunk, isMandatoryStop: isFirstOrLast))
             } else {
                 // Dense chunk (e.g. amusement park), apply fine-grained splitting
                 var fineChunk: [PhotoAsset] = [chunk[0]]
@@ -424,14 +441,14 @@ struct PhotoClusterer {
                     
                     // Fine threshold: 5 minutes OR 50 meters
                     if timeDelta > 300 || distDelta > 50 {
-                        finalWaypoints.append(createWaypoint(from: fineChunk))
+                        finalWaypoints.append(createWaypoint(from: fineChunk, isMandatoryStop: false))
                         fineChunk = [curr]
                     } else {
                         fineChunk.append(curr)
                     }
                 }
                 if !fineChunk.isEmpty {
-                    finalWaypoints.append(createWaypoint(from: fineChunk))
+                    finalWaypoints.append(createWaypoint(from: fineChunk, isMandatoryStop: isFirstOrLast))
                 }
             }
         }
@@ -439,14 +456,24 @@ struct PhotoClusterer {
         return finalWaypoints
     }
     
-    private static func createWaypoint(from photos: [PhotoAsset]) -> Waypoint {
+    private static func createWaypoint(from photos: [PhotoAsset], isMandatoryStop: Bool) -> Waypoint {
         let avgLat = photos.map { $0.location.latitude }.reduce(0, +) / Double(photos.count)
         let avgLon = photos.map { $0.location.longitude }.reduce(0, +) / Double(photos.count)
+        
+        let startDate = photos.first!.creationDate
+        let endDate = photos.last!.creationDate
+        let duration = endDate.timeIntervalSince(startDate)
+        
+        // All waypoints are shown as icons on the map.
+        // The isStayPoint flag is kept for potential future use.
+        let isStayPoint = true
+        
         return Waypoint(
             coordinate: CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon),
             photoCount: photos.count,
             photoIDs: photos.map { $0.id },
-            dateRange: (photos.first!.creationDate, photos.last!.creationDate)
+            dateRange: (startDate, endDate),
+            isStayPoint: isStayPoint
         )
     }
 }
@@ -466,6 +493,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     class Coordinator: NSObject, MKMapViewDelegate {
         var lastWaypoints: [Waypoint] = []
         var lastSplineCoords: [CLLocationCoordinate2D] = []
+        var waypointSplineIndices: [Int] = []  // Maps each waypoint index to its closest spline index
         var lastOverviewRect: MKMapRect?
         var lastProgress: Double = -1.0
         var lastIsPreparing: Bool = false
@@ -491,7 +519,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
         func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
             if !lastSplineCoords.isEmpty {
                 let targetIdxFloat = lastProgress * Double(max(0, lastSplineCoords.count - 1))
-                splineManager.updatePath(for: lastSplineCoords, in: mapView, progressIndex: targetIdxFloat)
+                splineManager.updatePath(for: lastSplineCoords, in: mapView, progressIndex: targetIdxFloat, isPlaying: isPlayingOrPreparing, isPreparing: isPlayingOrPreparing)
             }
         }
         
@@ -519,7 +547,8 @@ struct PhotoClusterMapView: UIViewRepresentable {
         
         mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "waypoint")
         
-        // Attach hardware accelerated line layer
+        // Attach hardware accelerated line layer above the map's tiles
+        context.coordinator.splineManager.shapeLayer.zPosition = 1000
         mapView.layer.addSublayer(context.coordinator.splineManager.shapeLayer)
         
         return mapView
@@ -541,14 +570,25 @@ struct PhotoClusterMapView: UIViewRepresentable {
             splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
             context.coordinator.lastSplineCoords = splineCoords
             
+            // Precompute: map each waypoint to its closest spline index
+            context.coordinator.waypointSplineIndices = waypoints.map { wp in
+                var bestIdx = 0
+                var bestDist = Double.greatestFiniteMagnitude
+                for (i, sc) in splineCoords.enumerated() {
+                    let d = pow(sc.latitude - wp.coordinate.latitude, 2) + pow(sc.longitude - wp.coordinate.longitude, 2)
+                    if d < bestDist { bestDist = d; bestIdx = i }
+                }
+                return bestIdx
+            }
+            
             // Rebuild Annotations
             uiView.removeAnnotations(uiView.annotations)
-            let newAnnotations = waypoints.map { WaypointAnnotation(waypoint: $0) }
+            let newAnnotations = waypoints.enumerated().map { WaypointAnnotation(waypoint: $1, index: $0) }
             uiView.addAnnotations(newAnnotations)
             
             // Rebuild Overlays
             let startIdxFloat = playbackProgress * Double(max(0, splineCoords.count - 1))
-            context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: startIdxFloat)
+            context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: startIdxFloat, isPlaying: isPlaying, isPreparing: isPreparing)
             
             // Calculate overview rect of BOTH waypoints and the curved spline!
             if !newAnnotations.isEmpty || !splineCoords.isEmpty {
@@ -591,7 +631,23 @@ struct PhotoClusterMapView: UIViewRepresentable {
         // 2. Hardware Accelerated stroke updates
         // Rebuild exact path substring. (strokeEnd uses geographic length, which misaligns with our array-index camera logic)
         let targetIdxFloat = playbackProgress * Double(max(0, splineCoords.count - 1))
-        context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: targetIdxFloat)
+        context.coordinator.splineManager.updatePath(for: splineCoords, in: uiView, progressIndex: targetIdxFloat, isPlaying: isPlaying, isPreparing: isPreparing)
+        
+        // 2.5 Update waypoint passed/unpassed visual state based on spline position
+        let splineIndices = context.coordinator.waypointSplineIndices
+        for annotation in uiView.annotations {
+            guard let wpAnn = annotation as? WaypointAnnotation,
+                  let view = uiView.view(for: wpAnn) as? WaypointAnnotationView else { continue }
+            let wpIdx = wpAnn.waypointIndex
+            if wpIdx < splineIndices.count {
+                let wpSplineIdx = Double(splineIndices[wpIdx])
+                let isPassed = playbackProgress > 0 && targetIdxFloat >= wpSplineIdx
+                
+                // Set zPriority to keep annotations above the line
+                view.zPriority = .max
+                view.updatePassedState(isPassed)
+            }
+        }
         
         // 3. Dynamic Cinematic Follow Camera
         let progressChanged = context.coordinator.lastProgress != playbackProgress
@@ -729,9 +785,13 @@ struct FootprintMapView: View {
     
     // Filtering State
     @State private var isShowingFilter = false
-    @State private var startDate = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
-    @State private var endDate = Date()
+    @State private var startDate = Date.distantPast
+    @State private var endDate = Date.distantFuture
     @State private var filterBounceTrigger = 0
+    
+    // Focused date for calendar linkage
+    enum FocusedDateField { case start, end }
+    @State private var focusedDate: FocusedDateField = .start
     
     // Annotation interaction state
     @State private var selectedAnnotation: SelectedAnnotationInfo?
@@ -780,33 +840,62 @@ struct FootprintMapView: View {
                 .ignoresSafeArea(edges: [.bottom, .horizontal])
             }
             
-
-            
-            // Fan thumbnail overlay
-            if let selected = selectedAnnotation {
-                FanThumbnailOverlay(
-                    photoIDs: selected.photoIDs,
-                    screenPoint: selected.screenPoint,
-                    thumbnailLoader: thumbnailLoader,
-                    onPhotoTap: { id in
-                        fullScreenPhotoIDs = selected.photoIDs
-                        fullScreenPhotoID = id
-                        thumbnailLoader.loadThumbnails(for: selected.photoIDs, size: CGSize(width: 800, height: 800))
-                    },
-                    onMoreTap: {
-                        galleryPhotoIDs = selected.photoIDs
-                        thumbnailLoader.loadThumbnails(for: selected.photoIDs)
-                        isShowingGallery = true
-                    },
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            selectedAnnotation = nil
-                        }
-                    }
-                )
-            }
-            
             playbackControls
+                .opacity(selectedAnnotation != nil ? 0 : 1)
+                .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
+            
+            // Hybrid Selection UI: Fan for small groups, Scrollable Tray for large ones
+            if let selected = selectedAnnotation {
+                if selected.photoIDs.count <= 3 {
+                    FanThumbnailOverlay(
+                        photoIDs: selected.photoIDs,
+                        screenPoint: selected.screenPoint,
+                        thumbnailLoader: thumbnailLoader,
+                        onPhotoTap: { id in
+                            fullScreenPhotoIDs = selected.photoIDs
+                            fullScreenPhotoID = id
+                            thumbnailLoader.loadThumbnails(for: selected.photoIDs, size: CGSize(width: 800, height: 800))
+                        },
+                        onMoreTap: {
+                            galleryPhotoIDs = selected.photoIDs
+                            isShowingGallery = true
+                            selectedAnnotation = nil
+                        },
+                        onDismiss: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                selectedAnnotation = nil
+                            }
+                        }
+                    )
+                } else {
+                    ClusterQuickGallery(
+                        photoIDs: selected.photoIDs,
+                        thumbnailLoader: thumbnailLoader,
+                        onPhotoTap: { id in
+                            fullScreenPhotoIDs = selected.photoIDs
+                            fullScreenPhotoID = id
+                            thumbnailLoader.loadThumbnails(for: selected.photoIDs, size: CGSize(width: 800, height: 800))
+                        },
+                        onShowFullGallery: {
+                            galleryPhotoIDs = selected.photoIDs
+                            isShowingGallery = true
+                            selectedAnnotation = nil
+                        },
+                        onDismiss: {
+                            withAnimation(.spring()) {
+                                selectedAnnotation = nil
+                            }
+                        }
+                    )
+                    .background(
+                        Color.black.opacity(0.12)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation { selectedAnnotation = nil }
+                            }
+                    )
+                }
+            }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -821,27 +910,13 @@ struct FootprintMapView: View {
                 .presentationDetents([.fraction(0.75)])
         }
         .onAppear {
-            let sortedParams = photos.sorted(by: { $0.creationDate < $1.creationDate })
-            
-            // Set default date range to Dec 27, 2023 - Jan 1, 2024
-            var componentsStart = DateComponents()
-            componentsStart.year = 2023
-            componentsStart.month = 12
-            componentsStart.day = 27
-            componentsStart.hour = 0
-            componentsStart.minute = 0
-            
-            var componentsEnd = DateComponents()
-            componentsEnd.year = 2024
-            componentsEnd.month = 1
-            componentsEnd.day = 1
-            componentsEnd.hour = 23
-            componentsEnd.minute = 59
-            
-            if let defaultStart = Calendar.current.date(from: componentsStart),
-               let defaultEnd = Calendar.current.date(from: componentsEnd) {
-                startDate = defaultStart
-                endDate = defaultEnd
+            // Reset to global photo range IF this is the first time entering (sentinel values detected)
+            if startDate == Date.distantPast || endDate == Date.distantFuture {
+                if let first = photos.min(by: { $0.creationDate < $1.creationDate })?.creationDate,
+                   let last = photos.max(by: { $0.creationDate < $1.creationDate })?.creationDate {
+                    startDate = first
+                    endDate = last
+                }
             }
             
             applyFilter()
@@ -875,32 +950,63 @@ struct FootprintMapView: View {
     
     private func applyFilter() {
         engine.stop()
-        // Normalize: startDate to 00:00, endDate to 23:59
         let cal = Calendar.current
-        let normalizedStart = cal.startOfDay(for: startDate)
-        let normalizedEnd = cal.date(bySettingHour: 23, minute: 59, second: 59, of: endDate) ?? endDate
         
-        let sorted = photos.sorted(by: { $0.creationDate < $1.creationDate })
-        filteredPhotos = sorted.filter {
-            $0.creationDate >= normalizedStart && $0.creationDate <= normalizedEnd
-        }
+        // Start of the selected start day (00:00:00)
+        let normalizedStart = cal.startOfDay(for: startDate)
+        
+        // Start of the day AFTER the selected end day (to cover the full end day)
+        let nextDay = cal.date(byAdding: .day, value: 1, to: endDate) ?? endDate
+        let normalizedEndLimit = cal.startOfDay(for: nextDay)
+        
+        // Filter and sort
+        filteredPhotos = photos.filter {
+            $0.creationDate >= normalizedStart && $0.creationDate < normalizedEndLimit
+        }.sorted(by: { $0.creationDate < $1.creationDate })
+        
         recluster()
     }
     
     private func recluster() {
+        // Use the raw waypoints from the clusterer
         let rawWaypoints = PhotoClusterer.clusterPhotos(filteredPhotos)
-        var unique: [Waypoint] = []
+        
+        // Pass 2: Merge extremely close waypoints (e.g., within 20m) to avoid overlapping icons
+        // but IMPORTANTLY: merge the data (photo counts and IDs) instead of discarding it.
+        var merged: [Waypoint] = []
         for wp in rawWaypoints {
-            if let last = unique.last {
+            if let last = merged.last {
                 let dist = CLLocation(latitude: wp.coordinate.latitude, longitude: wp.coordinate.longitude)
                     .distance(from: CLLocation(latitude: last.coordinate.latitude, longitude: last.coordinate.longitude))
-                if dist > 100.0 { unique.append(wp) }
-            } else {
-                unique.append(wp)
+                
+                if dist < 20.0 {
+                    // Update the last merging point instead of adding a new one
+                    let totalPhotos = last.photoCount + wp.photoCount
+                    let combinedIDs = last.photoIDs + wp.photoIDs
+                    let combinedDateRange = (min(last.dateRange.start, wp.dateRange.start), max(last.dateRange.end, wp.dateRange.end))
+                    
+                    // Simple weighted average for the coordinate to represent the cluster center
+                    let lat = (last.coordinate.latitude * Double(last.photoCount) + wp.coordinate.latitude * Double(wp.photoCount)) / Double(totalPhotos)
+                    let lon = (last.coordinate.longitude * Double(last.photoCount) + wp.coordinate.longitude * Double(wp.photoCount)) / Double(totalPhotos)
+                    
+                    let isMergedStayPoint = last.isStayPoint || wp.isStayPoint
+                    
+                    let mergedWP = Waypoint(
+                        coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                        photoCount: totalPhotos,
+                        photoIDs: combinedIDs,
+                        dateRange: combinedDateRange,
+                        isStayPoint: isMergedStayPoint
+                    )
+                    merged[merged.count - 1] = mergedWP
+                    continue
+                }
             }
+            merged.append(wp)
         }
-        waypoints = unique
-        engine.calculateDynamicDuration(for: unique)
+        
+        waypoints = merged
+        engine.calculateDynamicDuration(for: merged)
     }
     
     private var timeCapsuleDateText: String {
@@ -914,18 +1020,36 @@ struct FootprintMapView: View {
     private var filterSheet: some View {
         NavigationStack {
             Form {
-                Section(header: Text("选择播放的时间段")) {
-                    DatePicker("开始日期", selection: $startDate, displayedComponents: [.date])
-                    DatePicker("结束日期", selection: $endDate, displayedComponents: [.date])
+                Section {
+                    PhotoTemporalHeatmap(
+                        photos: photos,
+                        startDate: $startDate,
+                        endDate: $endDate
+                    )
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowSeparator(.hidden)
                 }
                 
+                Section(header: Text("选择播放的时间段")) {
+                    DatePicker("开始日期", selection: $startDate, in: ...endDate, displayedComponents: [.date])
+                        .listRowSeparator(.hidden)
+                    DatePicker("结束日期", selection: $endDate, in: startDate..., displayedComponents: [.date])
+                        .listRowSeparator(.hidden)
+                }
+                .listRowSeparator(.hidden)
+                
                 Section {
-                    Button("应用筛选并重置播放") {
+                    Button(action: {
                         applyFilter()
                         isShowingFilter = false
+                    }) {
+                        Text("应用筛选并重置播放")
+                            .frame(maxWidth: .infinity)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .foregroundColor(.blue)
+                    .listRowSeparator(.hidden)
                 }
             }
             .navigationTitle("设置轨道时间段")
@@ -938,7 +1062,7 @@ struct FootprintMapView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.fraction(0.7), .large])
     }
     
     // Custom Navigation Bar to allow seamless fade transitions
@@ -1125,6 +1249,8 @@ struct FootprintMapView: View {
 class WaypointAnnotationView: MKAnnotationView {
     private let countLabel = UILabel()
     private let bubbleView = UIView()
+    private let orangeColor = UIColor(red: 0.92, green: 0.43, blue: 0.12, alpha: 1.0)
+    private var currentIsPassed: Bool?
     
     override var annotation: MKAnnotation? {
         didSet {
@@ -1147,14 +1273,13 @@ class WaypointAnnotationView: MKAnnotationView {
     private func setupView() {
         backgroundColor = .clear
         
-        // Solid Orange Dot
-        bubbleView.backgroundColor = UIColor(red: 0.92, green: 0.43, blue: 0.12, alpha: 1.0) // Similar to #EB6E1F, solid orange
+        // Default: hollow (unpassed) style
+        bubbleView.backgroundColor = .white
         bubbleView.clipsToBounds = true
-        bubbleView.layer.borderColor = UIColor.white.cgColor
+        bubbleView.layer.borderColor = orangeColor.cgColor
         bubbleView.layer.borderWidth = 2.0
         
-        // Count label
-        countLabel.textColor = .white
+        countLabel.textColor = orangeColor
         countLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold)
         countLabel.textAlignment = .center
         
@@ -1162,7 +1287,26 @@ class WaypointAnnotationView: MKAnnotationView {
         bubbleView.addSubview(countLabel)
         
         self.collisionMode = .circle
-        self.layer.shadowOpacity = 0 // Explicitly no shadow to keep it ultra minimalistic
+        self.layer.shadowOpacity = 0
+    }
+    
+    func updatePassedState(_ isPassed: Bool) {
+        guard currentIsPassed != isPassed else { return }
+        currentIsPassed = isPassed
+        
+        UIView.animate(withDuration: 0.3) {
+            if isPassed {
+                // Filled: orange background, white text
+                self.bubbleView.backgroundColor = self.orangeColor
+                self.bubbleView.layer.borderColor = UIColor.white.cgColor
+                self.countLabel.textColor = .white
+            } else {
+                // Hollow: white background, orange border, orange text
+                self.bubbleView.backgroundColor = .white
+                self.bubbleView.layer.borderColor = self.orangeColor.cgColor
+                self.countLabel.textColor = self.orangeColor
+            }
+        }
     }
     
     private func updateLayout(for count: Int) {
@@ -1171,20 +1315,13 @@ class WaypointAnnotationView: MKAnnotationView {
         let bubbleHeight: CGFloat = 28
         let minBubbleWidth: CGFloat = 28
         
-        // Calculate width based on text
         let textSize = (text as NSString).size(withAttributes: [.font: countLabel.font!])
         let bubbleWidth = max(minBubbleWidth, textSize.width + horizontalPadding * 2)
         
         self.frame = CGRect(x: 0, y: 0, width: bubbleWidth, height: bubbleHeight)
-        
-        // Bubble
         bubbleView.frame = self.bounds
         bubbleView.layer.cornerRadius = bubbleHeight / 2
-        
-        // Label
         countLabel.frame = self.bounds
-        
-        // Center offset so the very center of the dot is at the exact coordinate
         self.centerOffset = .zero
     }
 }
@@ -1291,8 +1428,428 @@ struct StyleBackgroundView: View {
                 .scaledToFill()
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
-                // Placeholder background while assets are missing
                 .background(Color(UIColor.systemGray5))
+        }
+    }
+}
+
+// MARK: - Photo Temporal Heatmap
+
+struct PhotoTemporalHeatmap: View {
+    let photos: [PhotoAsset]
+    @Binding var startDate: Date
+    @Binding var endDate: Date
+    
+    // Viewport manages the "zoomed in" range of the heatmap
+    @State private var viewportStart: Date?
+    @State private var viewportEnd: Date?
+    
+    // Drag state
+    @State private var isDraggingStart = false
+    @State private var isDraggingEnd = false
+    // Anchors saved at drag start to avoid feedback loops during expansion
+    @State private var dragAnchorViewportStart: Date?
+    @State private var dragAnchorSpan: TimeInterval = 0
+    
+    // Indicator state for "showing which day"
+    @State private var indicatorDate: Date?
+    @State private var indicatorX: CGFloat?
+    
+    private var globalStart: Date {
+        photos.min(by: { $0.creationDate < $1.creationDate })
+            .map { Calendar.current.startOfDay(for: $0.creationDate) }
+            ?? Calendar.current.startOfDay(for: Date())
+    }
+    
+    private var globalEnd: Date {
+        photos.max(by: { $0.creationDate < $1.creationDate })
+            .map { Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: $0.creationDate) ?? $0.creationDate }
+            ?? Date()
+    }
+    
+    private var currentViewportStart: Date { viewportStart ?? globalStart }
+    private var currentViewportEnd: Date { viewportEnd ?? globalEnd }
+    
+    private var isZoomed: Bool {
+        viewportStart != nil || viewportEnd != nil
+    }
+
+    struct BinBucket {
+        let id: Int
+        let count: Int
+    }
+    
+    private func buckets(for start: Date, end: Date, numBins: Int = 60) -> [BinBucket] {
+        let span = end.timeIntervalSince(start)
+        guard span > 0 else { return [] }
+        
+        let binDuration = span / Double(numBins)
+        var bins = Array(repeating: 0, count: numBins)
+        for photo in photos {
+            let d = photo.creationDate
+            guard d >= start && d <= end else { continue }
+            let offset = d.timeIntervalSince(start)
+            let idx = min(numBins - 1, max(0, Int(offset / binDuration)))
+            bins[idx] += 1
+        }
+        return bins.enumerated().map { BinBucket(id: $0.offset, count: $0.element) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("当前旅程")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.primary)
+                    Text("\(photos.filter { $0.creationDate >= startDate && $0.creationDate <= endDate }.count) / \(photos.count) 张照片")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                if isZoomed {
+                    Button(action: {
+                        withAnimation(.spring()) {
+                            viewportStart = nil
+                            viewportEnd = nil
+                            startDate = globalStart
+                            endDate = globalEnd
+                        }
+                    }) {
+                        Image(systemName: "arrow.uturn.backward.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            
+            GeometryReader { geo in
+                let bkts = buckets(for: currentViewportStart, end: currentViewportEnd, numBins: 50)
+                let peak = Double(bkts.map(\.count).max() ?? 1)
+                let span = currentViewportEnd.timeIntervalSince(currentViewportStart)
+                
+                ZStack(alignment: .bottomLeading) {
+                    // Padding to allow handles to move outside the chart area visually
+                    Group {
+                        // 1. Smooth Area Heatmap (Fill)
+                        HeatmapAreaShape(buckets: bkts, peak: peak, isFill: true)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.orange.opacity(0.6), Color.orange.opacity(0.1)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                        
+                        // 2. Smooth Curve (Stroke - Top Only)
+                        HeatmapAreaShape(buckets: bkts, peak: peak, isFill: false)
+                            .stroke(Color.orange, lineWidth: 2)
+                    }
+                    .padding(.horizontal, 20) // The "Expansion Buffer"
+                    
+                    // Selection Handles (Relative to padded width)
+                    let chartWidth = geo.size.width - 40
+                    let leftX = span > 0 ? CGFloat((startDate.timeIntervalSince1970 - currentViewportStart.timeIntervalSince1970) / span) * chartWidth + 20 : 20
+                    let rightX = span > 0 ? CGFloat((endDate.timeIntervalSince1970 - currentViewportStart.timeIntervalSince1970) / span) * chartWidth + 20 : geo.size.width - 20
+                    
+                    // Left Handle — drag past left edge to expand viewport earlier
+                    CapsuleHandle(isDragging: isDraggingStart)
+                        .position(x: leftX, y: geo.size.height / 2)
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    if !isDraggingStart {
+                                        dragAnchorViewportStart = currentViewportStart
+                                        dragAnchorSpan = span
+                                    }
+                                    isDraggingStart = true
+                                    guard let anchor = dragAnchorViewportStart, dragAnchorSpan > 0 else { return }
+                                    
+                                    let relativeX = value.location.x - 20
+                                    let fraction = relativeX / chartWidth
+                                    
+                                    // Calculate target date based on EXACT finger position relative to original viewport
+                                    let targetDate = anchor.addingTimeInterval(dragAnchorSpan * Double(fraction))
+                                    let clamped = max(globalStart, min(targetDate, endDate.addingTimeInterval(-3600)))
+                                    startDate = clamped
+                                    
+                                    // REVEAL EFFECT: If pulling left, expand viewport MORE than handle
+                                    if clamped < currentViewportStart {
+                                        // Viewport expands to reveal a 10% buffer earlier than the handle
+                                        viewportStart = max(globalStart, clamped.addingTimeInterval(-dragAnchorSpan * 0.15))
+                                    }
+                                }
+                                .onEnded { _ in
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                        isDraggingStart = false
+                                        dragAnchorViewportStart = nil
+                                        dragAnchorSpan = 0
+                                        // Auto-zoom to final selection (snaps to edges)
+                                        viewportStart = startDate
+                                        viewportEnd = endDate
+                                    }
+                                }
+                        )
+                    
+                    // Right Handle
+                    CapsuleHandle(isDragging: isDraggingEnd)
+                        .position(x: rightX, y: geo.size.height / 2)
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    if !isDraggingEnd {
+                                        dragAnchorViewportStart = currentViewportStart
+                                        dragAnchorSpan = span
+                                    }
+                                    isDraggingEnd = true
+                                    guard let anchor = dragAnchorViewportStart, dragAnchorSpan > 0 else { return }
+                                    
+                                    let relativeX = value.location.x - 20
+                                    let fraction = relativeX / chartWidth
+                                    
+                                    let targetDate = anchor.addingTimeInterval(dragAnchorSpan * Double(fraction))
+                                    let clamped = min(globalEnd, max(targetDate, startDate.addingTimeInterval(3600)))
+                                    endDate = clamped
+                                    
+                                    // REVEAL EFFECT: If pulling right, expand viewport MORE than handle
+                                    if clamped > currentViewportEnd {
+                                        // Viewport expands to reveal a 10% buffer later than the handle
+                                        viewportEnd = min(globalEnd, clamped.addingTimeInterval(dragAnchorSpan * 0.15))
+                                    }
+                                }
+                                .onEnded { _ in
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                        isDraggingEnd = false
+                                        dragAnchorViewportStart = nil
+                                        dragAnchorSpan = 0
+                                        // Zoom viewport to current selection
+                                        viewportStart = startDate
+                                        viewportEnd = endDate
+                                    }
+                                }
+                        )
+
+                    // 4. Interactive Tooltip (Scrubbing / Tapping Background)
+                    if let x = indicatorX, let date = indicatorDate {
+                        VStack(spacing: 4) {
+                            Text(dateLabel(date))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.orange))
+                                .foregroundColor(.white)
+                            
+                            Rectangle()
+                                .fill(Color.orange.opacity(0.3))
+                                .frame(width: 1)
+                                .frame(maxHeight: .infinity)
+                        }
+                        .position(x: x, y: geo.size.height / 2)
+                        .transition(.opacity)
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard !isDraggingStart, !isDraggingEnd else {
+                                indicatorDate = nil
+                                indicatorX = nil
+                                return
+                            }
+                            
+                            let relativeX = value.location.x - 20
+                            let chartWidth = geo.size.width - 40
+                            let fraction = max(0, min(1, relativeX / chartWidth))
+                            let date = currentViewportStart.addingTimeInterval(span * Double(fraction))
+                            
+                            indicatorDate = date
+                            indicatorX = value.location.x
+                        }
+                        .onEnded { _ in
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                indicatorDate = nil
+                                indicatorX = nil
+                            }
+                        }
+                )
+            }
+            .frame(height: 80)
+            
+            HStack {
+                Text(dateLabel(startDate))
+                Spacer()
+                Text(dateLabel(endDate))
+            }
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 4)
+        }
+        .padding(.vertical, 8)
+        .onAppear {
+            // Restore visual zoom state from currently selected dates
+            // If the values differ from global range, initialize viewport to match
+            if startDate > globalStart || endDate < globalEnd {
+                viewportStart = startDate
+                viewportEnd = endDate
+            }
+        }
+    }
+    
+    private func dateLabel(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy.MM.dd"
+        return fmt.string(from: date)
+    }
+}
+
+// MARK: - Heatmap Area Shape & Helpers
+
+struct HeatmapAreaShape: Shape {
+    let buckets: [PhotoTemporalHeatmap.BinBucket]
+    let peak: Double
+    var isFill: Bool = true
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard !buckets.isEmpty, buckets.count > 1 else { return path }
+        
+        let width = rect.width
+        let height = rect.height
+        let step = width / CGFloat(buckets.count - 1)
+        
+        var points: [CGPoint] = []
+        for b in buckets {
+            let x = CGFloat(b.id) * step
+            let normalizedHeight = peak > 0 ? (Double(b.count) / peak) : 0
+            let y = height - (CGFloat(normalizedHeight) * height * 0.85)
+            points.append(CGPoint(x: x, y: y))
+        }
+        
+        if isFill {
+            path.move(to: CGPoint(x: 0, y: height))
+            path.addLine(to: points[0])
+            
+            for i in 0..<points.count - 1 {
+                let p1 = points[i]
+                let p2 = points[i+1]
+                let control1 = CGPoint(x: p1.x + (p2.x - p1.x) / 2, y: p1.y)
+                let control2 = CGPoint(x: p1.x + (p2.x - p1.x) / 2, y: p2.y)
+                path.addCurve(to: p2, control1: control1, control2: control2)
+            }
+            
+            path.addLine(to: CGPoint(x: width, y: height))
+            path.closeSubpath()
+        } else {
+            // For stroke: ONLY the top curve
+            path.move(to: points[0])
+            for i in 0..<points.count - 1 {
+                let p1 = points[i]
+                let p2 = points[i+1]
+                let control1 = CGPoint(x: p1.x + (p2.x - p1.x) / 2, y: p1.y)
+                let control2 = CGPoint(x: p1.x + (p2.x - p1.x) / 2, y: p2.y)
+                path.addCurve(to: p2, control1: control1, control2: control2)
+            }
+        }
+        
+        return path
+    }
+}
+
+private struct CapsuleHandle: View {
+    let isDragging: Bool
+    
+    var body: some View {
+        Capsule()
+            .fill(Color.white)
+            .frame(width: 4, height: 32)
+            .overlay(
+                Capsule()
+                    .stroke(Color.orange, lineWidth: 1.5)
+            )
+            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+            .scaleEffect(isDragging ? 1.4 : 1.0)
+            .contentShape(Rectangle().size(width: 30, height: 50)) // Larger touch target
+    }
+}
+
+// MARK: - Photo Date Calendar View
+
+struct PhotoDateCalendarView: UIViewRepresentable {
+    let photos: [PhotoAsset]
+    @Binding var selectedDate: Date      // The date currently being selected/focused
+    @Binding var otherDate: Date         // The other end of the range (for marking)
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+    
+    func makeUIView(context: Context) -> UICalendarView {
+        let calendarView = UICalendarView()
+        calendarView.delegate = context.coordinator
+        calendarView.calendar = Calendar.current
+        calendarView.fontDesign = .rounded
+        calendarView.tintColor = .systemOrange
+        
+        // Single date selection
+        let selection = UICalendarSelectionSingleDate(delegate: context.coordinator)
+        calendarView.selectionBehavior = selection
+        
+        // Initial visible date
+        let cal = Calendar.current
+        calendarView.setVisibleDateComponents(cal.dateComponents([.year, .month, .day], from: selectedDate), animated: false)
+        selection.selectedDate = cal.dateComponents([.year, .month, .day], from: selectedDate)
+        
+        return calendarView
+    }
+    
+    func updateUIView(_ uiView: UICalendarView, context: Context) {
+        let cal = Calendar.current
+        let targetComps = cal.dateComponents([.year, .month, .day], from: selectedDate)
+        
+        // Sync selection
+        if let selection = uiView.selectionBehavior as? UICalendarSelectionSingleDate {
+            if selection.selectedDate != targetComps {
+                selection.selectedDate = targetComps
+            }
+        }
+        
+        // Sync visible month (Linkage fix)
+        let visibleComps = uiView.visibleDateComponents
+        if visibleComps.year != targetComps.year || visibleComps.month != targetComps.month {
+            uiView.setVisibleDateComponents(targetComps, animated: true)
+        }
+        
+        uiView.reloadDecorations(forDateComponents: [], animated: true)
+    }
+    
+    class Coordinator: NSObject, UICalendarViewDelegate, UICalendarSelectionSingleDateDelegate {
+        var parent: PhotoDateCalendarView
+        let photoDates: Set<DateComponents>
+        
+        init(parent: PhotoDateCalendarView) {
+            self.parent = parent
+            let cal = Calendar.current
+            var dates = Set<DateComponents>()
+            for photo in parent.photos {
+                dates.insert(cal.dateComponents([.year, .month, .day], from: photo.creationDate))
+            }
+            self.photoDates = dates
+        }
+        
+        func calendarView(_ calendarView: UICalendarView, decorationFor dateComponents: DateComponents) -> UICalendarView.Decoration? {
+            if photoDates.contains(dateComponents) {
+                return .default(color: .systemOrange, size: .small)
+            }
+            return nil
+        }
+        
+        func dateSelection(_ selection: UICalendarSelectionSingleDate, didSelectDate dateComponents: DateComponents?) {
+            guard let comps = dateComponents, let date = Calendar.current.date(from: comps) else { return }
+            parent.selectedDate = date
         }
     }
 }

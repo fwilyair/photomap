@@ -154,6 +154,93 @@ struct FanThumbnailOverlay: View {
     }
 }
 
+// MARK: - Cluster Quick Gallery (Bottom Scroller)
+
+struct ClusterQuickGallery: View {
+    let photoIDs: [String]
+    let thumbnailLoader: ThumbnailLoader
+    let onPhotoTap: (String) -> Void
+    let onShowFullGallery: () -> Void
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            
+            // Interaction Area
+            VStack(spacing: 12) {
+                // Header / Handle
+                HStack {
+                    Text("足迹详情 (\(photoIDs.count)张照片)")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.9))
+                    
+                    Spacer()
+                    
+                    Button(action: onShowFullGallery) {
+                        Text("查看全部")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.orange)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                
+                // Horizontal Scroller
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(photoIDs, id: \.self) { id in
+                            Button(action: { 
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                onPhotoTap(id) 
+                            }) {
+                                quickThumbnail(for: id)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .frame(height: 100)
+                .padding(.bottom, 20)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+            .offset(y: 0)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .onAppear {
+            thumbnailLoader.loadThumbnails(for: Array(photoIDs.prefix(20)), size: CGSize(width: 300, height: 300))
+        }
+    }
+    
+    @ViewBuilder
+    private func quickThumbnail(for id: String) -> some View {
+        if let thumb = thumbnailLoader.thumbnails[id] {
+            Image(uiImage: thumb)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 80, height: 80)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 1))
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.1))
+                .frame(width: 80, height: 80)
+                .overlay(ProgressView().scaleEffect(0.7))
+        }
+    }
+}
+
 // MARK: - Masonry Gallery
 
 struct MasonryGalleryView: View {
