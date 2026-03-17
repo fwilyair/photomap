@@ -3,6 +3,19 @@ import Photos
 
 // MARK: - View Model (Manager)
 
+struct SmartCollection: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let type: CollectionType
+    let startDate: Date
+    let endDate: Date
+    let coverAssetID: String? // For bento box preview
+    
+    enum CollectionType {
+        case memory, trip, recentDay
+    }
+}
+
 @Observable @MainActor
 final class PhotoManager {
     
@@ -24,6 +37,13 @@ final class PhotoManager {
     var globalStartDate: Date?
     var globalEndDate: Date?
     
+    // Smart Collections & Home detection
+    var smartCollections: [SmartCollection] = []
+    var stationaryPoint: CLLocationCoordinate2D?
+    var hideStationary: Bool = UserDefaults.standard.bool(forKey: "hideStationary") {
+        didSet { UserDefaults.standard.set(hideStationary, forKey: "hideStationary") }
+    }
+    
     private var cacheFileURL: URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         return paths[0].appendingPathComponent("photo_cache.json")
@@ -32,6 +52,12 @@ final class PhotoManager {
     init() {
         checkInitialStatus()
         loadCache() // Load cache instantly on initialization
+        
+        // Background analysis for smart features
+        Task {
+            await fetchSmartCollections()
+            detectStationaryPoint()
+        }
     }
     
     private func checkInitialStatus() {
@@ -130,7 +156,234 @@ final class PhotoManager {
         
         updateGlobalRange()
         self.saveCache()
+        
+        // Re-analyze after adding new photos
+        cleanupInvalidAssets()
+        await fetchSmartCollections()
+        detectStationaryPoint()
+        
         self.isScanning = false
+    }
+    
+    /// Silently remove references to photos that are no longer in the system library
+    private func cleanupInvalidAssets() {
+        let allIDs = self.validPhotos.map { $0.id }
+        guard !allIDs.isEmpty else { return }
+        
+        let fetchOptions = PHFetchOptions()
+        let result = PHAsset.fetchAssets(withLocalIdentifiers: allIDs, options: fetchOptions)
+        
+        var validIDSet = Set<String>()
+        result.enumerateObjects { asset, _, _ in
+            validIDSet.insert(asset.localIdentifier)
+        }
+        
+        if validIDSet.count < allIDs.count {
+            let initialCount = self.validPhotos.count
+            self.validPhotos.removeAll { !validIDSet.contains($0.id) }
+            print("🧹 Silent Cleanup: Removed \(initialCount - self.validPhotos.count) invalid photo references.")
+            
+            updateGlobalRange()
+            saveCache()
+        }
+    }
+    
+    func fetchSmartCollections() async {
+        let options = PHFetchOptions()
+        var collections: [SmartCollection] = []
+        
+        // 1. 保底策略：尝试获取系统直接提供的重要智能相册（如果有的话）
+        let allSmartAlbums = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .any, options: options)
+        
+        allSmartAlbums.enumerateObjects { collection, _, _ in
+            let title = collection.localizedTitle ?? ""
+            var type: SmartCollection.CollectionType? = nil
+            
+            if title.contains("Trip") || title.contains("旅行") || title.contains("旅程") {
+                type = .trip
+            } else if title.contains("Memory") || title.contains("回忆") || title.contains("瞬间") {
+                type = .memory
+            }
+            
+            if let type = type, let start = collection.startDate, let end = collection.endDate {
+                let assetsFetch = PHAsset.fetchAssets(in: collection, options: nil)
+                let coverID = assetsFetch.firstObject?.localIdentifier
+                
+                collections.append(SmartCollection(
+                    id: collection.localIdentifier,
+                    title: title.isEmpty ? "精彩瞬间" : title,
+                    type: type,
+                    startDate: start,
+                    endDate: end,
+                    coverAssetID: coverID
+                ))
+            }
+        }
+        
+        // 2. 核心算法：基于系统原生 Moment 拼装旅程与回忆
+        analyzeAndGenerateCollections(into: &collections)
+        
+        // 最终去重、排序与截取
+        self.smartCollections = collections
+            .filter { $0.startDate < $0.endDate }
+            .sorted(by: { $0.startDate > $1.startDate })
+            .prefix(20)
+            .map { $0 }
+    }
+    
+    private func analyzeAndGenerateCollections(into collections: inout [SmartCollection]) {
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "startDate", ascending: true)]
+        
+        // 请求系统切割好的底层积木：Moments
+        let moments = PHAssetCollection.fetchMoments(with: options)
+        
+        var currentTripMoments: [PHAssetCollection] = []
+        let now = Date()
+        var localCollections: [SmartCollection] = []
+        
+        moments.enumerateObjects { moment, _, _ in
+            guard let start = moment.startDate, let end = moment.endDate else { return }
+            
+            // 1. 甄别近期的高光时刻（作为“回忆”）
+            let daysSinceMoment = now.timeIntervalSince(end) / 86400
+            if daysSinceMoment <= 30 {
+                let assetsCount = PHAsset.fetchAssets(in: moment, options: nil).count
+                if assetsCount >= 20 { // 聚会、同城游等高密度事件
+                    let coverID = PHAsset.fetchAssets(in: moment, options: nil).firstObject?.localIdentifier
+                    let title = moment.localizedTitle ?? "近期瞬间"
+                    let memory = SmartCollection(
+                        id: moment.localIdentifier + "_mem",
+                        title: title,
+                        type: .memory,
+                        startDate: start,
+                        endDate: end,
+                        coverAssetID: coverID
+                    )
+                    localCollections.append(memory)
+                }
+            }
+            
+            // 2. 甄别是否在异地（拼装“旅程”）
+            var isFarFromHome = true
+            if let home = self.stationaryPoint, let location = moment.approximateLocation {
+                let distance = location.distance(from: CLLocation(latitude: home.latitude, longitude: home.longitude))
+                if distance <= 20000 { // 在常驻地 20km 内，视为本地活动
+                    isFarFromHome = false
+                }
+            } else if self.stationaryPoint != nil && moment.approximateLocation == nil {
+                // 如果没有获取到地理位置，保守视为非远途，以避免误判合并
+                isFarFromHome = false
+            }
+            
+            if isFarFromHome {
+                // 属于异地，加入当前旅程拼图
+                if let last = currentTripMoments.last, let lastEnd = last.endDate {
+                    let gap = start.timeIntervalSince(lastEnd)
+                    if gap > 86400 * 2 { // 超过 48 小时空档期，代表上个旅程断片了，打包结单
+                        if let trip = self.processTripMoments(currentTripMoments) {
+                            localCollections.append(trip)
+                        }
+                        currentTripMoments = [moment]
+                    } else {
+                        currentTripMoments.append(moment)
+                    }
+                } else {
+                    currentTripMoments.append(moment)
+                }
+            } else {
+                // 回到本地了，把积攒的异地时刻打包为旅程结单
+                if let trip = self.processTripMoments(currentTripMoments) {
+                    localCollections.append(trip)
+                }
+                currentTripMoments.removeAll()
+            }
+        }
+        
+        // 将最后一段潜在旅程打包
+        if let trip = self.processTripMoments(currentTripMoments) {
+            localCollections.append(trip)
+        }
+        
+        collections.append(contentsOf: localCollections)
+    }
+    
+    private func processTripMoments(_ moments: [PHAssetCollection]) -> SmartCollection? {
+        guard !moments.isEmpty else { return nil }
+        
+        let start = moments.first!.startDate!
+        let end = moments.last!.endDate!
+        let duration = end.timeIntervalSince(start)
+        
+        // 只有短于 24 小时但多个组合，或者跨越 6 小时以上的，才算一次正经旅程
+        guard duration > 6 * 3600 || moments.count >= 2 else { return nil }
+        
+        // 灵活命名：尝试使用合并块中出现过的有效位置名称
+        var tripTitle = "旅途"
+        let titles = moments.compactMap { $0.localizedTitle }.filter { !$0.isEmpty }
+        if let firstTitle = titles.first {
+            tripTitle = "\(firstTitle)之旅"
+        } else {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "M月d日"
+            tripTitle = "\(fmt.string(from: start))之旅"
+        }
+        
+        // 提取最具代表性的封面，这里简单取最后（或最新）时刻的首张图
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.fetchLimit = 1
+        let coverID = PHAsset.fetchAssets(in: moments.last!, options: fetchOptions).firstObject?.localIdentifier
+        
+        // 防止和本地生成的产生ID冲突
+        let combinedID = moments.map { $0.localIdentifier }.joined(separator: "_").prefix(20)
+        
+        return SmartCollection(
+            id: String(combinedID),
+            title: tripTitle,
+            type: .trip,
+            startDate: start,
+            endDate: end,
+            coverAssetID: coverID
+        )
+    }
+    
+    func detectStationaryPoint() {
+        guard validPhotos.count > 50 else { return }
+        
+        // Simple grid-based frequency analysis (approx 100m grid)
+        var grid: [String: Int] = [:]
+        var dayCounts: [String: Set<Int>] = [:] // How many distinct days per grid cell
+        
+        let calendar = Calendar.current
+        
+        for photo in validPhotos {
+            let latInt = Int(photo.location.latitude * 1000)
+            let lonInt = Int(photo.location.longitude * 1000)
+            let key = "\(latInt),\(lonInt)"
+            
+            grid[key, default: 0] += 1
+            
+            let day = calendar.ordinality(of: .day, in: .era, for: photo.creationDate) ?? 0
+            if dayCounts[key] == nil { dayCounts[key] = [] }
+            dayCounts[key]?.insert(day)
+        }
+        
+        // Home point is likely where we have most photos AND most distinct days
+        let candidate = dayCounts.max { a, b in
+            // Primary sort: distinct days, Secondary: photo count
+            if a.value.count != b.value.count {
+                return a.value.count < b.value.count
+            }
+            return (grid[a.key] ?? 0) < (grid[b.key] ?? 0)
+        }
+        
+        if let key = candidate?.key, let days = candidate?.value, days.count > 7 {
+            let parts = key.split(separator: ",").map { Double($0)! / 1000.0 }
+            if parts.count == 2 {
+                self.stationaryPoint = CLLocationCoordinate2D(latitude: parts[0], longitude: parts[1])
+                print("Detected stationary point: \(parts[0]), \(parts[1]) over \(days.count) days")
+            }
+        }
     }
     
     func simulateAddition() {
@@ -365,7 +618,7 @@ struct FootprintHomeView: View {
                                         photos: photoManager.validPhotos,
                                         initialStartDate: photoManager.globalStartDate,
                                         initialEndDate: photoManager.globalEndDate
-                                    )) {
+                                    ).environment(photoManager)) {
                                         floatingActionBar(title: "漫游记忆的疆界", icon: "arrow.right")
                                     }
                                 }

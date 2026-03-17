@@ -47,6 +47,10 @@ enum MapStyleOption: String, CaseIterable, Identifiable, Codable {
     
     var isMapbox: Bool { !isApple }
     
+    /// Indicates if coordinates need to be converted to GCJ-02 (Mars coordinates) for this layer.
+    var isGCJ02Required: Bool { isApple }
+
+    
     /// Mapbox style URI string (only valid for Mapbox styles)
     var mapboxStyleURI: String? {
         switch self {

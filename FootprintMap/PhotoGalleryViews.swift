@@ -15,24 +15,39 @@ struct SelectedAnnotationInfo: Equatable {
 class ThumbnailLoader {
     var thumbnails: [String: UIImage] = [:]
     
-    func loadThumbnails(for ids: [String], size: CGSize = CGSize(width: 200, height: 200)) {
+    func loadThumbnails(for ids: [String], size: CGSize = CGSize(width: 300, height: 300)) {
         let idsToLoad = ids.filter { thumbnails[$0] == nil }
         guard !idsToLoad.isEmpty else { return }
         
-        let assets = PHAsset.fetchAssets(withLocalIdentifiers: idsToLoad, options: nil)
+        let fetchOptions = PHFetchOptions()
+        
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: idsToLoad, options: fetchOptions)
+        
+        // Log if some IDs are missing from the fetch result
+        if assets.count < idsToLoad.count {
+            let foundIDs = Set((0..<assets.count).map { assets.object(at: $0).localIdentifier })
+            let missing = idsToLoad.filter { !foundIDs.contains($0) }
+            print("📸 ThumbnailLoader: Missing \(missing.count) assets in library fetch. IDs: \(missing.prefix(3))...")
+        }
+        
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = true
+        options.isSynchronous = false
         
-        assets.enumerateObjects { asset, _, _ in
+        assets.enumerateObjects { [weak self] asset, _, _ in
             PHImageManager.default().requestImage(
                 for: asset, targetSize: size, contentMode: .aspectFill, options: options
-            ) { image, _ in
-                if let image = image {
-                    Task { @MainActor in
-                        self.thumbnails[asset.localIdentifier] = image
-                    }
+            ) { image, info in
+                if let error = info?[PHImageErrorKey] as? Error {
+                    print("❌ ThumbnailLoader: Error requesting image for \(asset.localIdentifier): \(error.localizedDescription)")
+                }
+                
+                guard let image = image else { return }
+                
+                Task { @MainActor in
+                    self?.thumbnails[asset.localIdentifier] = image
                 }
             }
         }

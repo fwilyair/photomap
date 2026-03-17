@@ -69,8 +69,12 @@ class WaypointAnnotation: NSObject, MKAnnotation {
     var photoIDs: [String]
     var waypointIndex: Int
     
-    init(waypoint: Waypoint, index: Int) {
-        self.coordinate = waypoint.coordinate
+    init(waypoint: Waypoint, index: Int, isGCJ02Required: Bool = false) {
+        if isGCJ02Required {
+            self.coordinate = CoordinateConverter.transformFromWGSToGCJ(coordinate: waypoint.coordinate)
+        } else {
+            self.coordinate = waypoint.coordinate
+        }
         self.id = waypoint.id.uuidString
         self.count = waypoint.photoCount
         self.photoIDs = waypoint.photoIDs
@@ -225,13 +229,15 @@ class PlaybackEngine {
 // MARK: - Smooth Spline Generation
 
 struct SplineRouteBuilder {
-    static func buildSmoothSpline(waypoints: [Waypoint]) -> [CLLocationCoordinate2D] {
+    static func buildSmoothSpline(waypoints: [Waypoint], isGCJ02Required: Bool = false) -> [CLLocationCoordinate2D] {
         // 1. Deduplicate waypoints that are effectively identical to prevent division by zero (infinite tangents)
         var uniqueWaypoints: [Waypoint] = []
         for wp in waypoints {
+            let wpCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: wp.coordinate) : wp.coordinate
             if let last = uniqueWaypoints.last {
-                let dist = CLLocation(latitude: wp.coordinate.latitude, longitude: wp.coordinate.longitude)
-                    .distance(from: CLLocation(latitude: last.coordinate.latitude, longitude: last.coordinate.longitude))
+                let lastCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: last.coordinate) : last.coordinate
+                let dist = CLLocation(latitude: wpCoord.latitude, longitude: wpCoord.longitude)
+                    .distance(from: CLLocation(latitude: lastCoord.latitude, longitude: lastCoord.longitude))
                 if dist > 100.0 {
                     uniqueWaypoints.append(wp)
                 }
@@ -240,10 +246,12 @@ struct SplineRouteBuilder {
             }
         }
         
-        guard uniqueWaypoints.count > 1 else { return uniqueWaypoints.map { $0.coordinate } }
+        guard uniqueWaypoints.count > 1 else {
+            return uniqueWaypoints.map { isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate }
+        }
         
         // Convert to MKMapPoint for perfect Cartesian 2D interpolation, avoiding spherical distortion
-        let mapPoints = uniqueWaypoints.map { MKMapPoint($0.coordinate) }
+        let mapPoints = uniqueWaypoints.map { MKMapPoint(isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate) }
         
         if mapPoints.count == 2 {
             var route: [CLLocationCoordinate2D] = []
@@ -491,6 +499,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     var isPlaying: Bool
     var isPreparing: Bool
     var mapType: MKMapType = .standard
+    var isGCJ02Required: Bool = false
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     
     class Coordinator: NSObject, MKMapViewDelegate {
@@ -570,15 +579,16 @@ struct PhotoClusterMapView: UIViewRepresentable {
         // 1. Update Annotations, Overlays & Overview Bounds
         if context.coordinator.lastWaypoints != waypoints {
             context.coordinator.lastWaypoints = waypoints
-            splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
+            splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints, isGCJ02Required: isGCJ02Required)
             context.coordinator.lastSplineCoords = splineCoords
             
             // Precompute: map each waypoint to its closest spline index
             context.coordinator.waypointSplineIndices = waypoints.map { wp in
+                let wpCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: wp.coordinate) : wp.coordinate
                 var bestIdx = 0
                 var bestDist = Double.greatestFiniteMagnitude
                 for (i, sc) in splineCoords.enumerated() {
-                    let d = pow(sc.latitude - wp.coordinate.latitude, 2) + pow(sc.longitude - wp.coordinate.longitude, 2)
+                    let d = pow(sc.latitude - wpCoord.latitude, 2) + pow(sc.longitude - wpCoord.longitude, 2)
                     if d < bestDist { bestDist = d; bestIdx = i }
                 }
                 return bestIdx
@@ -586,7 +596,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
             
             // Rebuild Annotations
             uiView.removeAnnotations(uiView.annotations)
-            let newAnnotations = waypoints.enumerated().map { WaypointAnnotation(waypoint: $1, index: $0) }
+            let newAnnotations = waypoints.enumerated().map { WaypointAnnotation(waypoint: $1, index: $0, isGCJ02Required: isGCJ02Required) }
             uiView.addAnnotations(newAnnotations)
             
             // Rebuild Overlays
@@ -780,6 +790,7 @@ struct FootprintMapView: View {
     var initialStartDate: Date? = nil
     var initialEndDate: Date? = nil
     
+    @Environment(PhotoManager.self) private var photoManager
     @Environment(\.dismiss) private var dismiss
     @State private var engine = PlaybackEngine()
     @State private var waypoints: [Waypoint] = []
@@ -806,6 +817,9 @@ struct FootprintMapView: View {
     @State private var fullScreenPhotoID: String?
     @State private var fullScreenPhotoIDs: [String] = []
     
+    // Smart Collections Bento View
+    @State private var isShowingSmartCollections = false
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             // Map Layer — dual engine: Apple MapKit or Mapbox
@@ -818,6 +832,7 @@ struct FootprintMapView: View {
                     isPlaying: engine.isPlaying,
                     isPreparing: engine.isPreparing,
                     mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
+                    isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
                     onAnnotationSelected: { ids, point in
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                             selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
@@ -848,6 +863,7 @@ struct FootprintMapView: View {
             playbackControls
                 .opacity(selectedAnnotation != nil ? 0 : 1)
                 .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
+            
             
             // Hybrid Selection UI: Fan for small groups, Scrollable Tray for large ones
             if let selected = selectedAnnotation {
@@ -954,6 +970,16 @@ struct FootprintMapView: View {
                 FullScreenPhotoView(photoIDs: fullScreenPhotoIDs, initialPhotoID: id, thumbnailLoader: thumbnailLoader)
             }
         }
+        .sheet(isPresented: $isShowingSmartCollections) {
+            SmartCollectionsGalleryView(onSelect: { collection in
+                withAnimation {
+                    self.startDate = collection.startDate
+                    self.endDate = collection.endDate
+                    applyFilter()
+                }
+            })
+            .environment(photoManager)
+        }
     }
     
     private func applyFilter() {
@@ -968,8 +994,18 @@ struct FootprintMapView: View {
         let normalizedEndLimit = cal.startOfDay(for: nextDay)
         
         // Filter (Photos are already sorted, so keep the order)
-        filteredPhotos = photos.filter {
-            $0.creationDate >= normalizedStart && $0.creationDate < normalizedEndLimit
+        filteredPhotos = photos.filter { photo in
+            let dateInRange = photo.creationDate >= normalizedStart && photo.creationDate < normalizedEndLimit
+            
+            if photoManager.hideStationary, let home = photoManager.stationaryPoint {
+                // Skip photos within ~5km (0.05 degrees)
+                let dist = pow(photo.location.latitude - home.latitude, 2) + pow(photo.location.longitude - home.longitude, 2)
+                if dist < 0.0025 { // 0.05^2
+                    return false
+                }
+            }
+            
+            return dateInRange
         }
         
         recluster()
@@ -1038,6 +1074,13 @@ struct FootprintMapView: View {
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .listRowSeparator(.hidden)
+                    
+                    Toggle("隐藏常驻地点 (家/办公)", isOn: Bindable(photoManager).hideStationary)
+                        .font(.system(size: 15, weight: .medium))
+                        .tint(.orange)
+                        .onChange(of: photoManager.hideStationary) { _ in
+                            applyFilter()
+                        }
                 }
                 
                 Section(header: Text("选择播放的时间段")) {
@@ -1074,6 +1117,7 @@ struct FootprintMapView: View {
         .presentationDetents([.fraction(0.7), .large])
     }
     
+    
     // Custom Navigation Bar to allow seamless fade transitions
     @ViewBuilder
     private var customNavigationBar: some View {
@@ -1093,7 +1137,18 @@ struct FootprintMapView: View {
             Spacer()
             
             // Right Actions
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // New: Smart Collections Gallery Entry
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    isShowingSmartCollections = true
+                }) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 18))
+                        .foregroundColor(.primary)
+                }
+                .frame(width: 44, height: 44)
+                
                 Button(action: {
                     isShowingLayerPicker = true
                 }) {
@@ -1114,15 +1169,10 @@ struct FootprintMapView: View {
                 }
                 .frame(width: 44, height: 44)
             }
+            .padding(.trailing, 60) // Extra padding to avoid Mapbox compass
         }
         .padding(.horizontal, 8)
         .frame(height: 44)
-        .background(
-            Color(UIColor.systemBackground)
-                .opacity(0.8)
-                .blur(radius: 10)
-                .ignoresSafeArea(edges: .top)
-        )
         .opacity(engine.isPlaying || engine.isPreparing ? 0 : 1)
         .animation(.easeInOut(duration: 0.35), value: engine.isPlaying || engine.isPreparing)
         .allowsHitTesting(!(engine.isPlaying || engine.isPreparing))

@@ -302,7 +302,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                     }
                     
                     if currentPath.count >= 2 {
-                        var polyline = PolylineAnnotation(lineCoordinates: currentPath)
+                        var polyline = PolylineAnnotation(id: "playback-line", lineCoordinates: currentPath)
                         polyline.lineColor = StyleColor(UIColor.systemOrange)
                         polyline.lineWidth = 5.0
                         polyline.lineOpacity = 0.95

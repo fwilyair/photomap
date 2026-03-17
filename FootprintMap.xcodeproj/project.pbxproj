@@ -3,10 +3,12 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		258379F9A2DA2065D0C7A546 /* CoordinateConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */; };
+		3C8517A7CCFC0ECD49133DFF /* SmartCollectionsGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */; };
 		3CC4617DCB235C2284E5EA2D /* MapboxMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090EC21C20B810688F6B7058 /* MapboxMapView.swift */; };
 		402C056B11AE61D8CC600C73 /* MapStyleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */; };
 		53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */; };
@@ -20,11 +22,13 @@
 /* Begin PBXFileReference section */
 		090EC21C20B810688F6B7058 /* MapboxMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapboxMapView.swift; sourceTree = "<group>"; };
 		0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapStyleManager.swift; sourceTree = "<group>"; };
-		752506D7891C648ADDD56748 /* FootprintMap.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FootprintMap.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateConverter.swift; sourceTree = "<group>"; };
+		752506D7891C648ADDD56748 /* FootprintMap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FootprintMap.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGalleryViews.swift; sourceTree = "<group>"; };
 		925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintHomeView.swift; sourceTree = "<group>"; };
 		CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintMapApp.swift; sourceTree = "<group>"; };
 		D5599BCA78B1E7B317DA1EBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartCollectionsGalleryView.swift; sourceTree = "<group>"; };
 		EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMapViews.swift; sourceTree = "<group>"; };
 		F719F5AD700BE27D0101BF99 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -61,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				F719F5AD700BE27D0101BF99 /* Assets.xcassets */,
+				5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */,
 				925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */,
 				CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */,
 				D5599BCA78B1E7B317DA1EBB /* Info.plist */,
@@ -68,6 +73,7 @@
 				0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */,
 				7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */,
 				EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */,
+				E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */,
 			);
 			path = FootprintMap;
 			sourceTree = "<group>";
@@ -117,7 +123,6 @@
 			packageReferences = (
 				3B023FD69D751165443514D4 /* XCRemoteSwiftPackageReference "mapbox-maps-ios" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -142,12 +147,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				258379F9A2DA2065D0C7A546 /* CoordinateConverter.swift in Sources */,
 				E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */,
 				53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */,
 				402C056B11AE61D8CC600C73 /* MapStyleManager.swift in Sources */,
 				3CC4617DCB235C2284E5EA2D /* MapboxMapView.swift in Sources */,
 				B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */,
 				754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */,
+				3C8517A7CCFC0ECD49133DFF /* SmartCollectionsGalleryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -214,6 +221,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 23P38GGRY2;
 				INFOPLIST_FILE = FootprintMap/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -293,6 +301,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 23P38GGRY2;
 				INFOPLIST_FILE = FootprintMap/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
