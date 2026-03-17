@@ -263,7 +263,7 @@ struct SplineRouteBuilder {
         pts.append(mapPoints.last!)
         
         var smoothRoute: [CLLocationCoordinate2D] = []
-        let steps = 60 // Points per spline segment for high-resolution curves
+        let steps = 20 // Points per spline segment for high-resolution curves
         
         // Centripetal Catmull-Rom requires calculating local knotted parameters.
         // We use an alpha of 0.5 (Centripetal) to ensure the curve doesn't create loops or overshoot tightly grouped points.
@@ -392,7 +392,8 @@ class SplineLayerManager {
 struct PhotoClusterer {
     static func clusterPhotos(_ photos: [PhotoAsset]) -> [Waypoint] {
         guard !photos.isEmpty else { return [] }
-        let sorted = photos.sorted(by: { $0.creationDate < $1.creationDate })
+        // Optimization: Input photos are already sorted by PhotoManager
+        let sorted = photos 
         
         // Pass 1: Coarse split by large gaps (> 4 hours OR > 10 km)
         var coarseChunks: [[PhotoAsset]] = []
@@ -403,11 +404,12 @@ struct PhotoClusterer {
             let curr = sorted[i]
             
             let timeDelta = curr.creationDate.timeIntervalSince(prev.creationDate)
-            let prevLoc = CLLocation(latitude: prev.location.latitude, longitude: prev.location.longitude)
-            let currLoc = CLLocation(latitude: curr.location.latitude, longitude: curr.location.longitude)
-            let distDelta = currLoc.distance(from: prevLoc)
             
-            if timeDelta > 3600 * 4 || distDelta > 10000 {
+            // Faster distance check using raw coordinates (Manhattan distance / quick box check) before heavy CLLocation
+            let latDelta = abs(curr.location.latitude - prev.location.latitude)
+            let lonDelta = abs(curr.location.longitude - prev.location.longitude)
+            
+            if timeDelta > 3600 * 4 || latDelta > 0.1 || lonDelta > 0.1 { // ~10km at equator for 0.1 degree
                 // Major break, commit chunk
                 coarseChunks.append(currentChunk)
                 currentChunk = [curr]
@@ -435,12 +437,13 @@ struct PhotoClusterer {
                     let curr = chunk[i]
                     
                     let timeDelta = curr.creationDate.timeIntervalSince(prev.creationDate)
-                    let prevLoc = CLLocation(latitude: prev.location.latitude, longitude: prev.location.longitude)
-                    let currLoc = CLLocation(latitude: curr.location.latitude, longitude: curr.location.longitude)
-                    let distDelta = currLoc.distance(from: prevLoc)
                     
-                    // Fine threshold: 5 minutes OR 50 meters
-                    if timeDelta > 300 || distDelta > 50 {
+                    // Faster distance check using raw coordinates
+                    let latDelta = abs(curr.location.latitude - prev.location.latitude)
+                    let lonDelta = abs(curr.location.longitude - prev.location.longitude)
+                    
+                    // Fine threshold: 5 minutes OR 50 meters (~0.0005 degree at equator for 50m)
+                    if timeDelta > 300 || latDelta > 0.0005 || lonDelta > 0.0005 {
                         finalWaypoints.append(createWaypoint(from: fineChunk, isMandatoryStop: false))
                         fineChunk = [curr]
                     } else {
@@ -774,6 +777,8 @@ struct PhotoClusterMapView: UIViewRepresentable {
 
 struct FootprintMapView: View {
     var photos: [PhotoAsset]
+    var initialStartDate: Date? = nil
+    var initialEndDate: Date? = nil
     
     @Environment(\.dismiss) private var dismiss
     @State private var engine = PlaybackEngine()
@@ -912,8 +917,11 @@ struct FootprintMapView: View {
         .onAppear {
             // Reset to global photo range IF this is the first time entering (sentinel values detected)
             if startDate == Date.distantPast || endDate == Date.distantFuture {
-                if let first = photos.min(by: { $0.creationDate < $1.creationDate })?.creationDate,
-                   let last = photos.max(by: { $0.creationDate < $1.creationDate })?.creationDate {
+                if let first = initialStartDate, let last = initialEndDate {
+                    startDate = first
+                    endDate = last
+                } else if let first = photos.first?.creationDate, let last = photos.last?.creationDate {
+                    // Fallback using the sorted property of our photos array
                     startDate = first
                     endDate = last
                 }
@@ -959,10 +967,10 @@ struct FootprintMapView: View {
         let nextDay = cal.date(byAdding: .day, value: 1, to: endDate) ?? endDate
         let normalizedEndLimit = cal.startOfDay(for: nextDay)
         
-        // Filter and sort
+        // Filter (Photos are already sorted, so keep the order)
         filteredPhotos = photos.filter {
             $0.creationDate >= normalizedStart && $0.creationDate < normalizedEndLimit
-        }.sorted(by: { $0.creationDate < $1.creationDate })
+        }
         
         recluster()
     }
@@ -976,10 +984,11 @@ struct FootprintMapView: View {
         var merged: [Waypoint] = []
         for wp in rawWaypoints {
             if let last = merged.last {
-                let dist = CLLocation(latitude: wp.coordinate.latitude, longitude: wp.coordinate.longitude)
-                    .distance(from: CLLocation(latitude: last.coordinate.latitude, longitude: last.coordinate.longitude))
+                // Quick approx distance check: 20m is ~0.0002 degrees locally
+                let latDelta = abs(wp.coordinate.latitude - last.coordinate.latitude)
+                let lonDelta = abs(wp.coordinate.longitude - last.coordinate.longitude)
                 
-                if dist < 20.0 {
+                if latDelta < 0.0002 && lonDelta < 0.0002 {
                     // Update the last merging point instead of adding a new one
                     let totalPhotos = last.photoCount + wp.photoCount
                     let combinedIDs = last.photoIDs + wp.photoIDs
@@ -1451,20 +1460,51 @@ struct PhotoTemporalHeatmap: View {
     @State private var dragAnchorViewportStart: Date?
     @State private var dragAnchorSpan: TimeInterval = 0
     
-    // Indicator state for "showing which day"
     @State private var indicatorDate: Date?
     @State private var indicatorX: CGFloat?
     
-    private var globalStart: Date {
-        photos.min(by: { $0.creationDate < $1.creationDate })
-            .map { Calendar.current.startOfDay(for: $0.creationDate) }
-            ?? Calendar.current.startOfDay(for: Date())
+    // Cached calculation results
+    @State private var cachedBuckets: [BinBucket] = []
+    @State private var cachedGlobalStart: Date = Date()
+    @State private var cachedGlobalEnd: Date = Date()
+    @State private var cachedPeak: Double = 1.0
+    
+    // Fast accessors
+    private var globalStart: Date { cachedGlobalStart }
+    private var globalEnd: Date { cachedGlobalEnd }
+    
+    private func refreshCache() {
+        let cal = Calendar.current
+        let start = photos.min(by: { $0.creationDate < $1.creationDate })?.creationDate ?? Date()
+        let end = photos.max(by: { $0.creationDate < $1.creationDate })?.creationDate ?? Date()
+        
+        cachedGlobalStart = cal.startOfDay(for: start)
+        cachedGlobalEnd = cal.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
+        
+        // Initial buckets for the full range
+        updateBuckets(for: viewportStart ?? cachedGlobalStart, end: viewportEnd ?? cachedGlobalEnd)
     }
     
-    private var globalEnd: Date {
-        photos.max(by: { $0.creationDate < $1.creationDate })
-            .map { Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: $0.creationDate) ?? $0.creationDate }
-            ?? Date()
+    private func updateBuckets(for start: Date, end: Date) {
+        let numBins = 50
+        let span = end.timeIntervalSince(start)
+        guard span > 0 else {
+            cachedBuckets = []
+            cachedPeak = 1.0
+            return
+        }
+        
+        let binDuration = span / Double(numBins)
+        var bins = Array(repeating: 0, count: numBins)
+        for photo in photos {
+            let d = photo.creationDate
+            guard d >= start && d <= end else { continue }
+            let offset = d.timeIntervalSince(start)
+            let idx = min(numBins - 1, max(0, Int(offset / binDuration)))
+            bins[idx] += 1
+        }
+        cachedBuckets = bins.enumerated().map { BinBucket(id: $0.offset, count: $0.element) }
+        cachedPeak = Double(bins.max() ?? 1)
     }
     
     private var currentViewportStart: Date { viewportStart ?? globalStart }
@@ -1479,21 +1519,6 @@ struct PhotoTemporalHeatmap: View {
         let count: Int
     }
     
-    private func buckets(for start: Date, end: Date, numBins: Int = 60) -> [BinBucket] {
-        let span = end.timeIntervalSince(start)
-        guard span > 0 else { return [] }
-        
-        let binDuration = span / Double(numBins)
-        var bins = Array(repeating: 0, count: numBins)
-        for photo in photos {
-            let d = photo.creationDate
-            guard d >= start && d <= end else { continue }
-            let offset = d.timeIntervalSince(start)
-            let idx = min(numBins - 1, max(0, Int(offset / binDuration)))
-            bins[idx] += 1
-        }
-        return bins.enumerated().map { BinBucket(id: $0.offset, count: $0.element) }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1516,6 +1541,7 @@ struct PhotoTemporalHeatmap: View {
                             viewportEnd = nil
                             startDate = globalStart
                             endDate = globalEnd
+                            updateBuckets(for: globalStart, end: globalEnd)
                         }
                     }) {
                         Image(systemName: "arrow.uturn.backward.circle.fill")
@@ -1527,8 +1553,8 @@ struct PhotoTemporalHeatmap: View {
             .padding(.horizontal, 4)
             
             GeometryReader { geo in
-                let bkts = buckets(for: currentViewportStart, end: currentViewportEnd, numBins: 50)
-                let peak = Double(bkts.map(\.count).max() ?? 1)
+                let bkts = cachedBuckets
+                let peak = cachedPeak
                 let span = currentViewportEnd.timeIntervalSince(currentViewportStart)
                 
                 ZStack(alignment: .bottomLeading) {
@@ -1690,12 +1716,24 @@ struct PhotoTemporalHeatmap: View {
         }
         .padding(.vertical, 8)
         .onAppear {
+            refreshCache()
+            
             // Restore visual zoom state from currently selected dates
             // If the values differ from global range, initialize viewport to match
             if startDate > globalStart || endDate < globalEnd {
                 viewportStart = startDate
                 viewportEnd = endDate
+                updateBuckets(for: startDate, end: endDate)
             }
+        }
+        .onChange(of: photos) { _, _ in
+            refreshCache()
+        }
+        .onChange(of: viewportStart) { _, _ in
+            updateBuckets(for: currentViewportStart, end: currentViewportEnd)
+        }
+        .onChange(of: viewportEnd) { _, _ in
+            updateBuckets(for: currentViewportStart, end: currentViewportEnd)
         }
     }
     

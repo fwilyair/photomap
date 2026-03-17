@@ -16,33 +16,49 @@ struct MapboxMapWrapperView: UIViewRepresentable {
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     
     func makeUIView(context: Context) -> MapView {
-        var cameraOptions: CameraOptions? = nil
+        let options = MapInitOptions(
+            cameraOptions: nil,
+            styleURI: StyleURI(rawValue: styleURI)
+        )
+        let mapView = MapView(frame: UIScreen.main.bounds, mapInitOptions: options)
+        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        
         if !waypoints.isEmpty {
             let splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
             var allCoords = splineCoords
             allCoords.append(contentsOf: waypoints.map { $0.coordinate })
             
-            // Temporary dummy MapView to calculate the correct camera without displaying it
-            let dummyMap = MapView(frame: UIScreen.main.bounds)
-            cameraOptions = dummyMap.mapboxMap.camera(
+            // Minimum span check: 0.05 degrees is ~5km
+            if let first = allCoords.first {
+                var minLat = first.latitude
+                var maxLat = first.latitude
+                var minLon = first.longitude
+                var maxLon = first.longitude
+                for c in allCoords {
+                    minLat = min(minLat, c.latitude)
+                    maxLat = max(maxLat, c.latitude)
+                    minLon = min(minLon, c.longitude)
+                    maxLon = max(maxLon, c.longitude)
+                }
+                if abs(maxLat - minLat) < 0.05 && abs(maxLon - minLon) < 0.05 {
+                    let centerLat = (minLat + maxLat) / 2
+                    let centerLon = (minLon + maxLon) / 2
+                    allCoords.append(CLLocationCoordinate2D(latitude: centerLat + 0.025, longitude: centerLon + 0.025))
+                    allCoords.append(CLLocationCoordinate2D(latitude: centerLat - 0.025, longitude: centerLon - 0.025))
+                }
+            }
+            
+            var camera = mapView.mapboxMap.camera(
                 for: allCoords,
-                padding: UIEdgeInsets(top: 40, left: 10, bottom: 120, right: 10),
+                padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
                 bearing: nil,
                 pitch: nil
             )
-            
-            // Aggressively boost zoom by +0.8 to match MapKit's tighter feel
-            if let currentZoom = cameraOptions?.zoom {
-                cameraOptions?.zoom = min(22.0, currentZoom + 0.8)
+            if let currentZoom = camera.zoom {
+                camera.zoom = min(22.0, currentZoom + 0.8)
             }
+            mapView.mapboxMap.setCamera(to: camera)
         }
-
-        let options = MapInitOptions(
-            cameraOptions: cameraOptions,
-            styleURI: StyleURI(rawValue: styleURI)
-        )
-        let mapView = MapView(frame: .zero, mapInitOptions: options)
-        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         
         mapView.ornaments.scaleBarView.isHidden = true
         mapView.ornaments.compassView.isHidden = false
@@ -90,9 +106,9 @@ struct MapboxMapWrapperView: UIViewRepresentable {
         private var pointAnnotationManager: PointAnnotationManager?     // Bottom: Waypoint icons
         private var polylineAnnotationManager: PolylineAnnotationManager? // Top: Trajectory line
         
-        // Cache for rendered images to avoid expensive rendering
-        private var iconCache: [Int: UIImage] = [:]  // filled (passed)
-        private var hollowIconCache: [Int: UIImage] = [:]  // hollow (unpassed)
+        // Cache for rendered images to avoid expensive rendering (survives navigation)
+        private static var iconCache: [Int: UIImage] = [:]  
+        private static var hollowIconCache: [Int: UIImage] = [:]  
         
         private var lastWaypoints: [Waypoint] = []
         private var waypointLookup: [(coordinate: CLLocationCoordinate2D, photoIDs: [String])] = []
@@ -150,24 +166,24 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                     
                     // Render filled icon if not in cache
                     let count = wp.photoCount
-                    if iconCache[count] == nil {
+                    if Self.iconCache[count] == nil {
                         let renderer = ImageRenderer(content: WaypointClusterIcon(count: count, isFilled: true))
                         renderer.scale = UIScreen.main.scale
                         if let image = renderer.uiImage {
-                            iconCache[count] = image
+                            Self.iconCache[count] = image
                         }
                     }
                     // Render hollow icon if not in cache
-                    if hollowIconCache[count] == nil {
+                    if Self.hollowIconCache[count] == nil {
                         let renderer = ImageRenderer(content: WaypointClusterIcon(count: count, isFilled: false))
                         renderer.scale = UIScreen.main.scale
                         if let image = renderer.uiImage {
-                            hollowIconCache[count] = image
+                            Self.hollowIconCache[count] = image
                         }
                     }
                     
                     // Default: all hollow (no playback yet)
-                    if let image = hollowIconCache[count] {
+                    if let image = Self.hollowIconCache[count] {
                         point.image = .init(image: image, name: "wp_hollow_\(count)")
                     }
                     
@@ -184,25 +200,47 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                     var allCoords = splineCoords
                     allCoords.append(contentsOf: waypoints.map { $0.coordinate })
                     
+                    // Safely calculate bounds and ensure a minimum span (prevent infinite zoom on single point)
+                    if !allCoords.isEmpty {
+                        var minLat = allCoords[0].latitude
+                        var maxLat = allCoords[0].latitude
+                        var minLon = allCoords[0].longitude
+                        var maxLon = allCoords[0].longitude
+                        
+                        for c in allCoords {
+                            minLat = min(minLat, c.latitude)
+                            maxLat = max(maxLat, c.latitude)
+                            minLon = min(minLon, c.longitude)
+                            maxLon = max(maxLon, c.longitude)
+                        }
+                        
+                        // Minimum span check: 0.05 degrees is ~5km, enough to avoid map artifacts
+                        if abs(maxLat - minLat) < 0.05 && abs(maxLon - minLon) < 0.05 {
+                            let centerLat = (minLat + maxLat) / 2
+                            let centerLon = (minLon + maxLon) / 2
+                            allCoords.append(CLLocationCoordinate2D(latitude: centerLat + 0.025, longitude: centerLon + 0.025))
+                            allCoords.append(CLLocationCoordinate2D(latitude: centerLat - 0.025, longitude: centerLon - 0.025))
+                        }
+                    }
+                    
                     var camera = mapView.mapboxMap.camera(
                         for: allCoords,
-                        padding: UIEdgeInsets(top: 40, left: 10, bottom: 120, right: 10),
+                        padding: UIEdgeInsets(top: 100, left: 50, bottom: 300, right: 50),
                         bearing: nil,
                         pitch: nil
                     )
                     
-                    // Apply +0.8 boost to counteract Mapbox's conservative camera calculation
+                    // Apply +0.8 boost to match MapKit's tighter feel
                     if let currentZoom = camera.zoom {
                         camera.zoom = min(22.0, currentZoom + 0.8)
                     }
                     
                     if !didInitialFit {
                         didInitialFit = true
-                        // Use setCamera for instant teleport to the target bounds
                         mapView.mapboxMap.setCamera(to: camera)
                     } else {
-                        // Filter update: Smooth transition to new bounds
-                        mapView.camera.ease(to: camera, duration: 1.0)
+                        // Smoothly transition to the filtered area
+                        mapView.camera.ease(to: camera, duration: 1.2, curve: .easeInOut)
                     }
                 }
             } else {
@@ -296,9 +334,9 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                             let currentState = (annotations[i].userInfo?["isPassed"] as? Bool) ?? false
                             if currentState != isPassed || annotations[i].image == nil {
                                 let count = lastWaypoints[wpIndex].photoCount
-                                if isPassed, let image = iconCache[count] {
+                                if isPassed, let image = Self.iconCache[count] {
                                     annotations[i].image = .init(image: image, name: "wp_filled_\(count)")
-                                } else if !isPassed, let image = hollowIconCache[count] {
+                                } else if !isPassed, let image = Self.hollowIconCache[count] {
                                     annotations[i].image = .init(image: image, name: "wp_hollow_\(count)")
                                 }
                                 

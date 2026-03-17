@@ -20,6 +20,10 @@ final class PhotoManager {
     var errorMessage: String? = nil
     var newlyAddedCount: Int = 0
     
+    // Cached global range
+    var globalStartDate: Date?
+    var globalEndDate: Date?
+    
     private var cacheFileURL: URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         return paths[0].appendingPathComponent("photo_cache.json")
@@ -62,6 +66,14 @@ final class PhotoManager {
         } catch {
             print("No cache found or failed to load: \(error)")
         }
+        updateGlobalRange()
+    }
+    
+    private func updateGlobalRange() {
+        guard !validPhotos.isEmpty else { return }
+        // Photos are sorted, so first and last are the range
+        self.globalStartDate = validPhotos.first?.creationDate
+        self.globalEndDate = validPhotos.last?.creationDate
     }
     
     func saveCache() {
@@ -116,6 +128,7 @@ final class PhotoManager {
         self.validPhotos.sort(by: { $0.creationDate < $1.creationDate })
         self.newlyAddedCount = newUniqueAssets.count
         
+        updateGlobalRange()
         self.saveCache()
         self.isScanning = false
     }
@@ -348,7 +361,11 @@ struct FootprintHomeView: View {
                                 
                                 // View Map Button
                                 if !photoManager.validPhotos.isEmpty {
-                                    NavigationLink(destination: FootprintMapView(photos: photoManager.validPhotos)) {
+                                    NavigationLink(destination: FootprintMapView(
+                                        photos: photoManager.validPhotos,
+                                        initialStartDate: photoManager.globalStartDate,
+                                        initialEndDate: photoManager.globalEndDate
+                                    )) {
                                         floatingActionBar(title: "漫游记忆的疆界", icon: "arrow.right")
                                     }
                                 }
