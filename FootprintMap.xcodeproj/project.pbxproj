@@ -14,6 +14,7 @@
 		53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */; };
 		5B752C44B68BC1DF45586D8A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F719F5AD700BE27D0101BF99 /* Assets.xcassets */; };
 		754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */; };
+		987C36FFB14D4E34CD1DF256 /* PlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */; };
 		B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */; };
 		E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */; };
 		EEB49BCFED48E85F8A36C034 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 37AA571A378D07F642DAC6AC /* MapboxMaps */; };
@@ -25,6 +26,7 @@
 		5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateConverter.swift; sourceTree = "<group>"; };
 		752506D7891C648ADDD56748 /* FootprintMap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FootprintMap.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGalleryViews.swift; sourceTree = "<group>"; };
+		7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
 		925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintHomeView.swift; sourceTree = "<group>"; };
 		CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintMapApp.swift; sourceTree = "<group>"; };
 		D5599BCA78B1E7B317DA1EBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -73,6 +75,7 @@
 				0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */,
 				7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */,
 				EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */,
+				7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */,
 				E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */,
 			);
 			path = FootprintMap;
@@ -154,6 +157,7 @@
 				3CC4617DCB235C2284E5EA2D /* MapboxMapView.swift in Sources */,
 				B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */,
 				754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */,
+				987C36FFB14D4E34CD1DF256 /* PlaybackController.swift in Sources */,
 				3C8517A7CCFC0ECD49133DFF /* SmartCollectionsGalleryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

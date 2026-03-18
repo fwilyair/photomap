@@ -14,6 +14,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
     var isPlaying: Bool
     var isPreparing: Bool
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
+    var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
     
     func makeUIView(context: Context) -> MapView {
         let options = MapInitOptions(
@@ -80,6 +81,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
         }
         
         context.coordinator.onSelected = onAnnotationSelected
+        context.coordinator.onWaypointLitUp = onWaypointLitUp
         
         context.coordinator.update(
             mapView: mapView,
@@ -101,6 +103,7 @@ struct MapboxMapWrapperView: UIViewRepresentable {
     class Coordinator: NSObject {
         weak var mapView: MapView?
         var onSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
+        var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
         
         // Canvas annotation managers — creation ORDER = Z-order (bottom to top)
         private var pointAnnotationManager: PointAnnotationManager?     // Bottom: Waypoint icons
@@ -336,6 +339,10 @@ struct MapboxMapWrapperView: UIViewRepresentable {
                                 let count = lastWaypoints[wpIndex].photoCount
                                 if isPassed, let image = Self.iconCache[count] {
                                     annotations[i].image = .init(image: image, name: "wp_filled_\(count)")
+                                    // Notify: waypoint just lit up (hollow -> filled)
+                                    if !currentState {
+                                        onWaypointLitUp?(wpIndex)
+                                    }
                                 } else if !isPassed, let image = Self.hollowIconCache[count] {
                                     annotations[i].image = .init(image: image, name: "wp_hollow_\(count)")
                                 }

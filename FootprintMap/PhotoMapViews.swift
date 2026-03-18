@@ -83,148 +83,7 @@ class WaypointAnnotation: NSObject, MKAnnotation {
     }
 }
 
-// MARK: - CADisplayLink Proxy to prevent retain cycles
-class DisplayLinkProxy: NSObject {
-    weak var target: AnyObject?
-    let selector: Selector
-    init(target: AnyObject, selector: Selector) {
-        self.target = target
-        self.selector = selector
-        super.init()
-    }
-    @objc func tick(_ sender: CADisplayLink) {
-        _ = target?.perform(selector, with: sender)
-    }
-}
-
-// MARK: - Playback Engine (CADisplayLink driven)
-
-@MainActor
-@Observable
-class PlaybackEngine {
-    var isPlaying = false
-    var isPreparing = false
-    var progress: Double = 0.0 // 0.0 to 1.0
-    var duration: TimeInterval = 10.0 // Dynamically calculated
-    
-    func calculateDynamicDuration(for waypoints: [Waypoint]) {
-        guard !waypoints.isEmpty else {
-            self.duration = 5.0
-            return
-        }
-        
-        var totalDuration: TimeInterval = 0.0
-        
-        for i in 0..<waypoints.count {
-            totalDuration += 0.9 // Base time per waypoint (snappy local pacing)
-            
-            if i < waypoints.count - 1 {
-                let wp1 = waypoints[i]
-                let wp2 = waypoints[i+1]
-                let loc1 = CLLocation(latitude: wp1.coordinate.latitude, longitude: wp1.coordinate.longitude)
-                let loc2 = CLLocation(latitude: wp2.coordinate.latitude, longitude: wp2.coordinate.longitude)
-                let dist = loc1.distance(from: loc2)
-                
-                // Adaptive Long-Jump: If distance > 50km, grant extra time for MapKit caching and visual transfer
-                if dist > 50_000 {
-                    // Grant ~2.5s per 100km to let the map load tiles steadily, up to a max jump delay of 10s per leg
-                    let extraTime = min(10.0, (dist / 100_000.0) * 2.5)
-                    totalDuration += extraTime
-                }
-            }
-        }
-        
-        // UX Research indicates 30-45 seconds is the upper bound for short-form memory recaps before attention drop-off.
-        // Capping at 45s maximum to prevent visual fatigue on extremely dense tracks.
-        self.duration = max(5.0, min(45.0, totalDuration))
-    }
-    
-    private var displayLink: CADisplayLink?
-    private var startTime: CFTimeInterval = 0
-    private var startProgress: Double = 0.0
-    
-    private let prepareDuration: TimeInterval = 3.0 // 1.8s for camera flight + 1.2s buffer/focus time
-    
-    func togglePlayPause() {
-        if isPlaying || isPreparing {
-            pause()
-        } else {
-            play()
-        }
-    }
-    
-    func play() {
-        if progress >= 1.0 {
-            progress = 0.0
-        }
-        
-        // If we are starting from 0, initiate the preparation phase
-        if progress == 0.0 {
-            isPreparing = true
-            isPlaying = false
-        } else {
-            isPreparing = false
-            isPlaying = true
-        }
-        
-        startProgress = progress
-        startTime = CACurrentMediaTime()
-        
-        displayLink?.invalidate()
-        let proxy = DisplayLinkProxy(target: self, selector: #selector(handleDisplayLink(_:)))
-        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick(_:)))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
-    }
-    
-    func pause() {
-        isPlaying = false
-        isPreparing = false
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-    
-    func stop() {
-        pause()
-        progress = 0.0
-    }
-    
-    func seek(to newProgress: Double) {
-        progress = max(0.0, min(1.0, newProgress))
-        if isPlaying || isPreparing {
-            isPreparing = false // Manually seeking snaps us out of preparation
-            isPlaying = true
-            startProgress = progress
-            startTime = CACurrentMediaTime()
-        }
-    }
-    
-    @objc private func handleDisplayLink(_ link: CADisplayLink) {
-        let elapsed = CACurrentMediaTime() - startTime
-        
-        if isPreparing {
-            if elapsed >= prepareDuration {
-                // Preparation finished, seamlessly transition into actual playback
-                isPreparing = false
-                isPlaying = true
-                startTime = CACurrentMediaTime() // Reset start time for the actual run
-                startProgress = 0.0
-            } else {
-                // Keep progress exactly at 0 to hold the camera at the start point
-                self.progress = 0.0
-            }
-        } else if isPlaying {
-            let addedProgress = elapsed / duration
-            var newProgress = startProgress + addedProgress
-            
-            if newProgress >= 1.0 {
-                newProgress = 1.0
-                pause() // Auto pause at end
-            }
-            self.progress = newProgress
-        }
-    }
-}
+// REMOVED: PlaybackEngine and DisplayLinkProxy are now provided by PlaybackController.swift
 
 // MARK: - Smooth Spline Generation
 
@@ -501,6 +360,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     var mapType: MKMapType = .standard
     var isGCJ02Required: Bool = false
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
+    var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
     
     class Coordinator: NSObject, MKMapViewDelegate {
         var lastWaypoints: [Waypoint] = []
@@ -513,6 +373,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
         var initialCamera: MKMapCamera?
         let splineManager = SplineLayerManager()
         var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
+        var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
         var isPlayingOrPreparing = false
         
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
@@ -569,6 +430,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     func updateUIView(_ uiView: MKMapView, context: Context) {
         context.coordinator.isPlayingOrPreparing = isPlaying || isPreparing
         context.coordinator.onAnnotationSelected = onAnnotationSelected
+        context.coordinator.onWaypointLitUp = onWaypointLitUp
         
         if uiView.mapType != mapType {
             uiView.mapType = mapType
@@ -655,6 +517,12 @@ struct PhotoClusterMapView: UIViewRepresentable {
             if wpIdx < splineIndices.count {
                 let wpSplineIdx = Double(splineIndices[wpIdx])
                 let isPassed = playbackProgress > 0 && targetIdxFloat >= wpSplineIdx
+                
+                // Notify on hollow -> filled transition
+                let wasPassed = view.currentIsPassed ?? false
+                if isPassed && !wasPassed {
+                    context.coordinator.onWaypointLitUp?(wpIdx)
+                }
                 
                 // Set zPriority to keep annotations above the line
                 view.zPriority = .max
@@ -792,7 +660,7 @@ struct FootprintMapView: View {
     
     @Environment(PhotoManager.self) private var photoManager
     @Environment(\.dismiss) private var dismiss
-    @State private var engine = PlaybackEngine()
+    @State private var playbackController = PlaybackController()
     @State private var waypoints: [Waypoint] = []
     @State private var mapStyleManager = MapStyleManager.shared
     @State private var isShowingLayerPicker = false
@@ -820,6 +688,9 @@ struct FootprintMapView: View {
     // Smart Collections Bento View
     @State private var isShowingSmartCollections = false
     
+    // Montage interaction
+    @State private var showMontageControls = false
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             // Map Layer — dual engine: Apple MapKit or Mapbox
@@ -827,10 +698,10 @@ struct FootprintMapView: View {
                 PhotoClusterMapView(
                     photos: filteredPhotos,
                     waypoints: waypoints,
-                    playbackProgress: engine.progress,
-                    playbackDuration: engine.duration,
-                    isPlaying: engine.isPlaying,
-                    isPreparing: engine.isPreparing,
+                    playbackProgress: playbackController.progress,
+                    playbackDuration: playbackController.duration,
+                    isPlaying: playbackController.isPlaying,
+                    isPreparing: playbackController.isPreparing,
                     mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
                     isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
                     onAnnotationSelected: { ids, point in
@@ -838,6 +709,9 @@ struct FootprintMapView: View {
                             selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
                         }
                         thumbnailLoader.loadThumbnails(for: ids)
+                    },
+                    onWaypointLitUp: { wpIndex in
+                        playbackController.showFlashbackForWaypoint(index: wpIndex)
                     }
                 )
                 .ignoresSafeArea(edges: [.bottom, .horizontal])
@@ -846,15 +720,18 @@ struct FootprintMapView: View {
                     photos: filteredPhotos,
                     waypoints: waypoints,
                     styleURI: styleURI,
-                    playbackProgress: engine.progress,
-                    playbackDuration: engine.duration,
-                    isPlaying: engine.isPlaying,
-                    isPreparing: engine.isPreparing,
+                    playbackProgress: playbackController.progress,
+                    playbackDuration: playbackController.duration,
+                    isPlaying: playbackController.isPlaying,
+                    isPreparing: playbackController.isPreparing,
                     onAnnotationSelected: { ids, point in
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                             selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
                         }
                         thumbnailLoader.loadThumbnails(for: ids)
+                    },
+                    onWaypointLitUp: { wpIndex in
+                        playbackController.showFlashbackForWaypoint(index: wpIndex)
                     }
                 )
                 .ignoresSafeArea(edges: [.bottom, .horizontal])
@@ -864,6 +741,8 @@ struct FootprintMapView: View {
                 .opacity(selectedAnnotation != nil ? 0 : 1)
                 .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
             
+            flashbackOverlay
+            montageOverlay
             
             // Hybrid Selection UI: Fan for small groups, Scrollable Tray for large ones
             if let selected = selectedAnnotation {
@@ -946,9 +825,9 @@ struct FootprintMapView: View {
             applyFilter()
         }
         .onDisappear {
-            engine.stop()
+            playbackController.stop()
         }
-        .onChange(of: engine.isPlaying) { _, isPlaying in
+        .onChange(of: playbackController.isPlaying) { _, isPlaying in
             if isPlaying { withAnimation { selectedAnnotation = nil } }
         }
         .sheet(isPresented: $isShowingGallery) {
@@ -982,8 +861,143 @@ struct FootprintMapView: View {
         }
     }
     
+    @ViewBuilder
+    private var flashbackOverlay: some View {
+        if let asset = playbackController.currentFlashbackAsset, playbackController.state == .playing {
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    if let image = thumbnailLoader.thumbnails[asset.id] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geo.size.width, height: geo.size.height * 0.40)
+                            .clipped()
+                            .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+                            .padding(.top, geo.safeAreaInsets.top + 44) // Below nav bar
+                    } else {
+                        Color.black.opacity(0.1)
+                            .frame(width: geo.size.width, height: geo.size.height * 0.40)
+                            .overlay(ProgressView())
+                            .padding(.top, geo.safeAreaInsets.top + 44)
+                            .onAppear {
+                                thumbnailLoader.loadThumbnails(for: [asset.id], size: CGSize(width: 1200, height: 1200))
+                            }
+                    }
+                    Spacer()
+                }
+            }
+            .ignoresSafeArea()
+            .id(asset.id)
+            .allowsHitTesting(false)
+        }
+    }
+    
+    @ViewBuilder
+    private var montageOverlay: some View {
+        if playbackController.state == .montage {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                    .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+                
+                if let asset = playbackController.currentMontageAsset {
+                    if let image = thumbnailLoader.thumbnails[asset.id] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .ignoresSafeArea()
+                            .id(asset.id)
+                    } else {
+                        ProgressView()
+                            .tint(.white)
+                            .onAppear {
+                                thumbnailLoader.loadThumbnails(for: [asset.id], size: CGSize(width: 1200, height: 1200))
+                            }
+                    }
+                }
+                
+                // Tap to show/hide controls
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showMontageControls.toggle()
+                        }
+                    }
+                
+                // Montage controls with progress bar
+                if showMontageControls {
+                    VStack(spacing: 16) {
+                        Spacer()
+                        
+                        // Draggable progress bar
+                        GeometryReader { barGeo in
+                            ZStack(alignment: .leading) {
+                                // Track
+                                RoundedRectangle(cornerRadius: 1.5)
+                                    .fill(Color.white.opacity(0.2))
+                                    .frame(height: 3)
+                                
+                                // Fill
+                                RoundedRectangle(cornerRadius: 1.5)
+                                    .fill(Color.orange)
+                                    .frame(width: barGeo.size.width * CGFloat(playbackController.montageProgress), height: 3)
+                            }
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        let ratio = min(max(value.location.x / barGeo.size.width, 0.0), 1.0)
+                                        playbackController.seekMontage(to: Double(ratio))
+                                    }
+                            )
+                        }
+                        .frame(height: 24)
+                        .padding(.horizontal, 32)
+                        
+                        // Controls: stop(left) play/pause(right)
+                        HStack(spacing: 16) {
+                            Button(action: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.spring()) {
+                                    showMontageControls = false
+                                    playbackController.exitMontage()
+                                }
+                            }) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                            }
+                            
+                            Button(action: {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                if playbackController.isMontagePaused {
+                                    playbackController.resumeMontage()
+                                } else {
+                                    playbackController.pause()
+                                }
+                            }) {
+                                Image(systemName: playbackController.isMontagePaused ? "play.fill" : "pause.fill")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(.orange)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                            }
+                        }
+                        .padding(.bottom, 60)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .zIndex(100)
+            .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+        }
+    }
+    
     private func applyFilter() {
-        engine.stop()
+        playbackController.stop()
         let cal = Calendar.current
         
         // Start of the selected start day (00:00:00)
@@ -1051,7 +1065,7 @@ struct FootprintMapView: View {
         }
         
         waypoints = merged
-        engine.calculateDynamicDuration(for: merged)
+        playbackController.setup(waypoints: merged, photos: photos)
     }
     
     private var timeCapsuleDateText: String {
@@ -1173,9 +1187,9 @@ struct FootprintMapView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 44)
-        .opacity(engine.isPlaying || engine.isPreparing ? 0 : 1)
-        .animation(.easeInOut(duration: 0.35), value: engine.isPlaying || engine.isPreparing)
-        .allowsHitTesting(!(engine.isPlaying || engine.isPreparing))
+        .opacity(playbackController.isPlaying || playbackController.isPreparing ? 0 : 1)
+        .animation(.easeInOut(duration: 0.35), value: playbackController.isPlaying || playbackController.isPreparing)
+        .allowsHitTesting(!(playbackController.isPlaying || playbackController.isPreparing))
     }
     
     private var startDateText: String {
@@ -1210,7 +1224,7 @@ struct FootprintMapView: View {
                                             withAnimation(.spring()) { selectedAnnotation = nil }
                                         }
                                         let percentage = min(max(value.location.x / geo.size.width, 0.0), 1.0)
-                                        engine.seek(to: Double(percentage))
+                                        playbackController.seek(to: Double(percentage))
                                     }
                             )
                     }
@@ -1227,7 +1241,7 @@ struct FootprintMapView: View {
                             .mask(
                                 GeometryReader { geo in
                                     Rectangle()
-                                        .frame(width: geo.size.width * CGFloat(engine.progress))
+                                        .frame(width: geo.size.width * CGFloat(playbackController.progress))
                                 }
                             )
                             .frame(height: 1.0)
@@ -1252,12 +1266,12 @@ struct FootprintMapView: View {
             // Right Control Cluster
             HStack(spacing: 12) {
                 // Secondary Button: Stop (Minimalist)
-                if !waypoints.isEmpty && (engine.isPlaying || engine.progress > 0) {
+                if !waypoints.isEmpty && (playbackController.isPlaying || playbackController.progress > 0) {
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         withAnimation(.spring()) {
                             selectedAnnotation = nil
-                            engine.stop()
+                            playbackController.stop()
                         }
                     }) {
                         Image(systemName: "stop.fill")
@@ -1273,10 +1287,10 @@ struct FootprintMapView: View {
                     UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                     withAnimation(.interpolatingSpring(stiffness: 120, damping: 12)) {
                         selectedAnnotation = nil
-                        engine.togglePlayPause()
+                        playbackController.togglePlayPause()
                     }
                 }) {
-                    Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: playbackController.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.orange)
                         .contentTransition(.symbolEffect(.replace))
@@ -1299,7 +1313,7 @@ struct FootprintMapView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 32)
         .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: engine.isPlaying || engine.isPreparing)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: playbackController.isPlaying || playbackController.isPreparing)
     }
 }
 
@@ -1309,7 +1323,7 @@ class WaypointAnnotationView: MKAnnotationView {
     private let countLabel = UILabel()
     private let bubbleView = UIView()
     private let orangeColor = UIColor(red: 0.92, green: 0.43, blue: 0.12, alpha: 1.0)
-    private var currentIsPassed: Bool?
+    private(set) var currentIsPassed: Bool?
     
     override var annotation: MKAnnotation? {
         didSet {
