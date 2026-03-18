@@ -4,15 +4,15 @@ import QuartzCore
 
 // MARK: - CADisplayLink Proxy to prevent retain cycles
 class DisplayLinkProxy: NSObject {
-    weak var target: AnyObject?
-    let selector: Selector
-    init(target: AnyObject, selector: Selector) {
-        self.target = target
-        self.selector = selector
+    var callback: ((CADisplayLink) -> Void)?
+    
+    init(callback: @escaping (CADisplayLink) -> Void) {
+        self.callback = callback
         super.init()
     }
+    
     @objc func tick(_ sender: CADisplayLink) {
-        _ = target?.perform(selector, with: sender)
+        callback?(sender)
     }
 }
 
@@ -32,12 +32,18 @@ class PlaybackController {
     var duration: TimeInterval = 10.0 // Trajectory playback duration
     var montageProgress: Double = 0.0 // 0.0 to 1.0 for montage timeline
     
+    // Recording status
+    var hasAttemptedRecording: Bool = false
+    var isRecording: Bool = false
+    var onRecordingFinished: (() -> Void)?
+    
     // For En-route Flash and Finale Montage
     var currentFlashbackAsset: PhotoAsset? = nil
     var currentMontageAsset: PhotoAsset? = nil
     
     // Playback Internals
     private var displayLink: CADisplayLink?
+    private var displayLinkProxy: DisplayLinkProxy?
     private var startTime: CFTimeInterval = 0
     private var startProgress: Double = 0.0
     private let prepareDuration: TimeInterval = 3.0
@@ -56,11 +62,12 @@ class PlaybackController {
         let asset: PhotoAsset?
     }
     private var pathSegments: [SegmentTiming] = []
+    private(set) var splineCoords: [CLLocationCoordinate2D] = []
     private var montageAssets: [PhotoAsset] = []
-    private var montageDuration: TimeInterval = 0.0
+    private(set) var montageDuration: TimeInterval = 0.0
     private var montageStartTime: TimeInterval = 0.0
     // Per-photo cumulative end times for time-weighted montage pacing
-    private var montageSliceEndTimes: [TimeInterval] = []
+    private(set) var montageSliceEndTimes: [TimeInterval] = []
     // Montage pause tracking
     private var montagePausedElapsed: TimeInterval = 0.0
     var isMontagePaused: Bool = false
@@ -77,6 +84,19 @@ class PlaybackController {
         
         // Reset state
         self.stop()
+        self.hasAttemptedRecording = false
+        self.isRecording = false
+        
+        // Initial spline calculation
+        self.splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints)
+    }
+    
+    func getPhotos() -> [PhotoAsset] {
+        return Array(photoDict.values)
+    }
+    
+    func getSplineCoords() -> [CLLocationCoordinate2D] {
+        return splineCoords
     }
     
     // MARK: - Time-Driven Speed (Logarithmic) Calculation
@@ -244,6 +264,11 @@ class PlaybackController {
     }
     
     func play() {
+        if !hasAttemptedRecording {
+            hasAttemptedRecording = true
+            isRecording = true
+        }
+
         if progress >= 1.0 {
             // Already at end, restart
             progress = 0.0
@@ -267,9 +292,6 @@ class PlaybackController {
         
         // Resume montage tracking if returning to montage
         if state == .montage {
-            // If we paused during montage, startTime must adapt to montage progress
-            // Since we don't have a `montageProgress`, we start fresh or from 0 for now.
-            // A more complex implementation would track montage paused time.
             montageStartTime = CACurrentMediaTime() 
         }
         
@@ -323,7 +345,10 @@ class PlaybackController {
     
     private func startDisplayLink() {
         displayLink?.invalidate()
-        let proxy = DisplayLinkProxy(target: self, selector: #selector(handleDisplayLink(_:)))
+        let proxy = DisplayLinkProxy { [weak self] link in
+            self?.handleDisplayLink(link)
+        }
+        self.displayLinkProxy = proxy
         let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick(_:)))
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -398,6 +423,11 @@ class PlaybackController {
         self.currentMontageAsset = nil
         self.state = .finished
         stopDisplayLink()
+        
+        if isRecording {
+            isRecording = false
+            onRecordingFinished?()
+        }
     }
     
     private func updateFlashbackAssetForCurrentProgress() {
@@ -420,7 +450,7 @@ class PlaybackController {
         currentFlashbackAsset = nil
     }
     
-    private func updateMontageAssetForElapsed(_ elapsed: TimeInterval) {
+    func updateMontageAssetForElapsed(_ elapsed: TimeInterval) {
         guard !montageAssets.isEmpty, !montageSliceEndTimes.isEmpty else { return }
         
         var index = 0
@@ -481,4 +511,6 @@ class PlaybackController {
     var isMontage: Bool {
         return state == .montage
     }
+    
 }
+

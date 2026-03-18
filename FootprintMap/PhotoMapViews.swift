@@ -22,6 +22,9 @@ struct PhotoAsset: Identifiable, Hashable, Sendable, Codable {
         self.location = location
         self.creationDate = creationDate
     }
+    var phAsset: PHAsset? {
+        PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+    }
     
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -359,6 +362,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
     var isPreparing: Bool
     var mapType: MKMapType = .standard
     var isGCJ02Required: Bool = false
+    var isExporting: Bool = false
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
     var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
     
@@ -575,8 +579,12 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 let newCamera = MKMapCamera(lookingAtCenter: exactCurrentCoord, fromDistance: targetAltitude, pitch: 0, heading: 0)
                 
                 // Native smooth swoop utilizing the exact prep time
-                UIView.animate(withDuration: 1.8, delay: 0, options: .curveEaseInOut) {
+                if isExporting {
                     uiView.camera = newCamera
+                } else {
+                    UIView.animate(withDuration: 1.8, delay: 0, options: .curveEaseInOut) {
+                        uiView.camera = newCamera
+                    }
                 }
             }
             // Phase 2: Returning to global overview at boundaries
@@ -586,12 +594,16 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 if let initialCamera = context.coordinator.initialCamera {
                     if justEnded {
                         // Smoothly fly back out to user's exact pre-playback camera state
-                        UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
+                        if isExporting {
                             uiView.camera = initialCamera
+                        } else {
+                            UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
+                                uiView.camera = initialCamera
+                            }
                         }
                     } else {
                         // Native fast snap for just rewinding manually
-                        uiView.setCamera(initialCamera, animated: true)
+                        uiView.setCamera(initialCamera, animated: !isExporting)
                     }
                 } else if let rect = context.coordinator.lastOverviewRect {
                     // Fallback to bounding rect if no initial camera saved
@@ -601,11 +613,15 @@ struct PhotoClusterMapView: UIViewRepresentable {
                         let distance = rect.size.width * 1.5
                         let newCamera = MKMapCamera(lookingAtCenter: centerCoordinate, fromDistance: distance, pitch: 0, heading: 0)
                         
-                        UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
+                        if isExporting {
                             uiView.camera = newCamera
+                        } else {
+                            UIView.animate(withDuration: 3.5, delay: 0.5, options: .curveEaseInOut) {
+                                uiView.camera = newCamera
+                            }
                         }
                     } else {
-                        uiView.setVisibleMapRect(rect, edgePadding: edgePadding, animated: true)
+                        uiView.setVisibleMapRect(rect, edgePadding: edgePadding, animated: !isExporting)
                     }
                 }
             }
@@ -664,7 +680,7 @@ struct FootprintMapView: View {
     @State private var waypoints: [Waypoint] = []
     @State private var mapStyleManager = MapStyleManager.shared
     @State private var isShowingLayerPicker = false
-    
+    @State private var isShowingExport = false
     @State private var filteredPhotos: [PhotoAsset] = []
     
     // Filtering State
@@ -691,58 +707,22 @@ struct FootprintMapView: View {
     // Montage interaction
     @State private var showMontageControls = false
     
+    // Video Export (V4: Background Synthesis)
+    @StateObject private var synthesizer = BackgroundVideoSynthesizer()
+    @State private var isExportingVideo = false
+    @State private var pendingExportConfig: VideoExportEngine.ExportConfig?
+    
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Map Layer — dual engine: Apple MapKit or Mapbox
-            if mapStyleManager.currentStyle.isApple {
-                PhotoClusterMapView(
-                    photos: filteredPhotos,
-                    waypoints: waypoints,
-                    playbackProgress: playbackController.progress,
-                    playbackDuration: playbackController.duration,
-                    isPlaying: playbackController.isPlaying,
-                    isPreparing: playbackController.isPreparing,
-                    mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
-                    isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
-                    onAnnotationSelected: { ids, point in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
-                        }
-                        thumbnailLoader.loadThumbnails(for: ids)
-                    },
-                    onWaypointLitUp: { wpIndex in
-                        playbackController.showFlashbackForWaypoint(index: wpIndex)
-                    }
-                )
+            // Main View Content
+            mapContentWithOverlays
                 .ignoresSafeArea(edges: [.bottom, .horizontal])
-            } else if let styleURI = mapStyleManager.currentStyle.mapboxStyleURI {
-                MapboxMapWrapperView(
-                    photos: filteredPhotos,
-                    waypoints: waypoints,
-                    styleURI: styleURI,
-                    playbackProgress: playbackController.progress,
-                    playbackDuration: playbackController.duration,
-                    isPlaying: playbackController.isPlaying,
-                    isPreparing: playbackController.isPreparing,
-                    onAnnotationSelected: { ids, point in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
-                        }
-                        thumbnailLoader.loadThumbnails(for: ids)
-                    },
-                    onWaypointLitUp: { wpIndex in
-                        playbackController.showFlashbackForWaypoint(index: wpIndex)
-                    }
-                )
-                .ignoresSafeArea(edges: [.bottom, .horizontal])
+            
+            if !isExportingVideo {
+                playbackControls
+                    .opacity(selectedAnnotation != nil ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
             }
-            
-            playbackControls
-                .opacity(selectedAnnotation != nil ? 0 : 1)
-                .animation(.easeInOut(duration: 0.2), value: selectedAnnotation != nil)
-            
-            flashbackOverlay
-            montageOverlay
             
             // Hybrid Selection UI: Fan for small groups, Scrollable Tray for large ones
             if let selected = selectedAnnotation {
@@ -797,10 +777,18 @@ struct FootprintMapView: View {
                 }
             }
         }
+        // Capture view bridge for video export (points to MirrorView)
+        .background(
+            ViewCaptureHelper { view in
+                // We'll manage trigger in .onChange now
+            }
+        )
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .overlay(alignment: .top) {
-            customNavigationBar
+            if !isExportingVideo {
+                customNavigationBar
+            }
         }
         .sheet(isPresented: $isShowingFilter) {
             filterSheet
@@ -808,6 +796,28 @@ struct FootprintMapView: View {
         .sheet(isPresented: $isShowingLayerPicker) {
             MapLayerPickerSheet(styleManager: mapStyleManager)
                 .presentationDetents([.fraction(0.75)])
+        }
+        .sheet(isPresented: $isShowingExport) {
+            ExportSettingsView(
+                playbackController: playbackController,
+                waypoints: waypoints,
+                thumbnailLoader: thumbnailLoader,
+                onStartExport: { config in
+                    pendingExportConfig = config
+                    // Reset and start recording manually
+                    playbackController.stop()
+                    playbackController.hasAttemptedRecording = false
+                    // Delay slightly to allow sheet dismissal
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        playbackController.play()
+                    }
+                }
+            )
+        }
+        .overlay {
+            if isExportingVideo {
+                exportProgressOverlay
+            }
         }
         .onAppear {
             // Reset to global photo range IF this is the first time entering (sentinel values detected)
@@ -829,6 +839,12 @@ struct FootprintMapView: View {
         }
         .onChange(of: playbackController.isPlaying) { _, isPlaying in
             if isPlaying { withAnimation { selectedAnnotation = nil } }
+        }
+        .onChange(of: playbackController.isRecording) { _, isRecording in
+            if isRecording {
+                // Video export temporarily disabled per user request
+                // triggerRecording()
+            }
         }
         .sheet(isPresented: $isShowingGallery) {
             MasonryGalleryView(
@@ -993,6 +1009,162 @@ struct FootprintMapView: View {
             }
             .zIndex(100)
             .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+        }
+    }
+    
+    @ViewBuilder
+    private var exportProgressOverlay: some View {
+        Color.black.opacity(0.75)
+            .ignoresSafeArea()
+            .overlay {
+                VStack(spacing: 24) {
+                    if case .completed(let url) = synthesizer.status {
+                        // Success state
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundColor(.green)
+                        
+                        VStack(spacing: 8) {
+                            Text("渲染已完成！")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text("视频已准备就绪")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        
+                        VStack(spacing: 12) {
+                            Button(action: { saveToPhotos(url: url) }) {
+                                Label("保存到相册", systemImage: "square.and.arrow.down")
+                                    .fontWeight(.bold)
+                                    .frame(width: 200, height: 50)
+                                    .background(Color.orange)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(12)
+                            }
+                            
+                            ShareLink(item: url) {
+                                Label("分享视频", systemImage: "square.and.arrow.up")
+                                    .fontWeight(.bold)
+                                    .frame(width: 200, height: 50)
+                                    .background(Color.white.opacity(0.1))
+                                    .foregroundColor(.white)
+                                    .cornerRadius(12)
+                            }
+                            
+                            Button("完成") {
+                                isExportingVideo = false
+                                synthesizer.status = .idle
+                            }
+                            .padding(.top, 12)
+                            .foregroundColor(.white.opacity(0.6))
+                        }
+                    } else {
+                        // Exporting state
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        
+                        VStack(spacing: 8) {
+                            Text("正在录制你的旅程回忆...")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            Text("请勿离开此界面")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.5))
+                            
+                            if case .synthesizing(let progress) = synthesizer.status {
+                                Text("\(Int(progress * 100))%")
+                                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.orange)
+                                
+                                ProgressView(value: progress)
+                                    .progressViewStyle(.linear)
+                                    .frame(width: 200)
+                                    .tint(.orange)
+                            }
+                        }
+                        
+                        Button("取消") {
+                            synthesizer.status = .idle
+                            isExportingVideo = false
+                        }
+                        .foregroundColor(.white.opacity(0.5))
+                        .padding(.top, 8)
+                    }
+                }
+            }
+    }
+    
+    @ViewBuilder
+    private var mapContentWithOverlays: some View {
+        ZStack {
+            if mapStyleManager.currentStyle.isApple {
+                PhotoClusterMapView(
+                    photos: filteredPhotos,
+                    waypoints: waypoints,
+                    playbackProgress: playbackController.progress,
+                    playbackDuration: playbackController.duration,
+                    isPlaying: playbackController.isPlaying,
+                    isPreparing: playbackController.isPreparing,
+                    mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
+                    isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
+                    onAnnotationSelected: { ids, point in
+                        guard !playbackController.isRecording else { return }
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+                        }
+                        thumbnailLoader.loadThumbnails(for: ids)
+                    },
+                    onWaypointLitUp: { wpIndex in
+                        playbackController.showFlashbackForWaypoint(index: wpIndex)
+                    }
+                )
+            } else if let styleURI = mapStyleManager.currentStyle.mapboxStyleURI {
+                MapboxMapWrapperView(
+                    photos: filteredPhotos,
+                    waypoints: waypoints,
+                    styleURI: styleURI,
+                    playbackProgress: playbackController.progress,
+                    playbackDuration: playbackController.duration,
+                    isPlaying: playbackController.isPlaying,
+                    isPreparing: playbackController.isPreparing,
+                    onAnnotationSelected: { ids, point in
+                        guard !playbackController.isRecording else { return }
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
+                        }
+                        thumbnailLoader.loadThumbnails(for: ids)
+                    },
+                    onWaypointLitUp: { wpIndex in
+                        playbackController.showFlashbackForWaypoint(index: wpIndex)
+                    }
+                )
+            }
+            
+            flashbackOverlay
+            montageOverlay
+        }
+    }
+    
+    private func triggerRecording() {
+        // Video export temporarily disabled per user request
+    }
+
+    private func saveToPhotos(url: URL) {
+        PHPhotoLibrary.requestAuthorization { status in
+            if status == .authorized {
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }) { success, error in
+                    if success {
+                        DispatchQueue.main.async {
+                            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -1172,6 +1344,21 @@ struct FootprintMapView: View {
                 }
                 .frame(width: 44, height: 44)
                 
+                /*
+                if playbackController.state == .finished {
+                    Button(action: {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        isShowingExport = true
+                    }) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 18))
+                            .foregroundColor(.orange)
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                    .frame(width: 44, height: 44)
+                }
+                */
+                
                 Button(action: {
                     filterBounceTrigger += 1
                     isShowingFilter.toggle()
@@ -1187,9 +1374,9 @@ struct FootprintMapView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 44)
-        .opacity(playbackController.isPlaying || playbackController.isPreparing ? 0 : 1)
-        .animation(.easeInOut(duration: 0.35), value: playbackController.isPlaying || playbackController.isPreparing)
-        .allowsHitTesting(!(playbackController.isPlaying || playbackController.isPreparing))
+        .opacity((playbackController.state == .playing || playbackController.state == .preparing || playbackController.state == .montage) ? 0 : 1)
+        .animation(.easeInOut(duration: 0.35), value: playbackController.state == .playing || playbackController.state == .preparing || playbackController.state == .montage)
+        .allowsHitTesting(!(playbackController.state == .playing || playbackController.state == .preparing || playbackController.state == .montage))
     }
     
     private var startDateText: String {
@@ -1207,37 +1394,20 @@ struct FootprintMapView: View {
     // Playback UI Panel
     @ViewBuilder
     private var playbackControls: some View {
-        // Redesigned UI: The Time Capsule
-        HStack(spacing: 16) {
-            // Left: Micro-Timeline
-            VStack(spacing: 4) {
-                // Progress Bar Zone
-                ZStack(alignment: .leading) {
-                    // Touch Capture
-                    GeometryReader { geo in
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        if selectedAnnotation != nil {
-                                            withAnimation(.spring()) { selectedAnnotation = nil }
-                                        }
-                                        let percentage = min(max(value.location.x / geo.size.width, 0.0), 1.0)
-                                        playbackController.seek(to: Double(percentage))
-                                    }
-                            )
-                    }
-                    
-                    // Visual Bar
+        if !isExportingVideo {
+            HStack(spacing: 8) {
+                // Left: Playback progress info
+                VStack(alignment: .leading, spacing: 2) {
                     ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.08))
+                        // Background track
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(Color.white.opacity(0.15))
                             .frame(height: 1.0)
                         
-                        Rectangle()
+                        // Animated progress fill
+                        RoundedRectangle(cornerRadius: 1.5)
                             .fill(Color.orange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: 1.0)
                             .mask(
                                 GeometryReader { geo in
                                     Rectangle()
@@ -1247,75 +1417,79 @@ struct FootprintMapView: View {
                             .frame(height: 1.0)
                     }
                     .frame(height: 12)
+                    
+                    // Dates (Hidden during active playback for a simplified look)
+                    if !(playbackController.state == .playing || playbackController.state == .preparing || playbackController.state == .montage) {
+                        HStack {
+                            Text(startDateText)
+                            Spacer()
+                            Text(endDateText)
+                        }
+                        .font(.system(size: 10, weight: .light, design: .monospaced))
+                        .foregroundColor(.primary.opacity(0.5))
+                        .tracking(1.0)
+                        .transition(.asymmetric(insertion: .push(from: .top), removal: .opacity))
+                    }
                 }
-                .frame(height: 12) // Fix height for progress bar zone
+                .frame(minHeight: 12)
+                .padding(.leading, 8)
                 
-                // Dates
-                HStack {
-                    Text(startDateText)
-                    Spacer()
-                    Text(endDateText)
-                }
-                .font(.system(size: 10, weight: .light, design: .monospaced))
-                .foregroundColor(.primary.opacity(0.5))
-                .tracking(1.0)
-            }
-            .frame(height: 32)
-            .padding(.leading, 8)
-            
-            // Right Control Cluster
-            HStack(spacing: 12) {
-                // Secondary Button: Stop (Minimalist)
-                if !waypoints.isEmpty && (playbackController.isPlaying || playbackController.progress > 0) {
+                // Right Control Cluster
+                HStack(spacing: 12) {
+                    // Secondary Button: Stop (Minimalist)
+                    if !waypoints.isEmpty && (playbackController.isPlaying || playbackController.progress > 0) {
+                        Button(action: {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring()) {
+                                selectedAnnotation = nil
+                                playbackController.stop()
+                            }
+                        }) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary.opacity(0.8))
+                                .frame(width: 32, height: 32)
+                        }
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                    
+                    // Primary Button: Play/Pause (Minimalist)
                     Button(action: {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        withAnimation(.spring()) {
+                        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                        withAnimation(.interpolatingSpring(stiffness: 120, damping: 12)) {
                             selectedAnnotation = nil
-                            playbackController.stop()
+                            playbackController.togglePlayPause()
                         }
                     }) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary.opacity(0.8))
+                        Image(systemName: playbackController.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .contentTransition(.symbolEffect(.replace))
                             .frame(width: 32, height: 32)
                     }
-                    .transition(.scale.combined(with: .opacity))
+                    .disabled(waypoints.isEmpty)
+                    .opacity(waypoints.isEmpty ? 0.3 : 1.0)
                 }
-                
-                // Primary Button: Play/Pause (Minimalist)
-                Button(action: {
-                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                    withAnimation(.interpolatingSpring(stiffness: 120, damping: 12)) {
-                        selectedAnnotation = nil
-                        playbackController.togglePlayPause()
-                    }
-                }) {
-                    Image(systemName: playbackController.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.orange)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 32, height: 32)
-                }
-                .disabled(waypoints.isEmpty)
-                .opacity(waypoints.isEmpty ? 0.3 : 1.0)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, (playbackController.state == .playing || playbackController.state == .preparing || playbackController.state == .montage) ? 8 : 16)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                    )
+            )
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
+            .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: playbackController.isPlaying || playbackController.isPreparing)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(
-            Capsule()
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                )
-        )
-        .padding(.horizontal, 24)
-        .padding(.bottom, 32)
-        .shadow(color: .black.opacity(0.15), radius: 20, x: 0, y: 10)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: playbackController.isPlaying || playbackController.isPreparing)
     }
 }
+
+
 
 // MARK: - Custom Annotation View
 
@@ -1952,6 +2126,30 @@ struct PhotoDateCalendarView: UIViewRepresentable {
         func dateSelection(_ selection: UICalendarSelectionSingleDate, didSelectDate dateComponents: DateComponents?) {
             guard let comps = dateComponents, let date = Calendar.current.date(from: comps) else { return }
             parent.selectedDate = date
+        }
+    }
+}
+
+// MARK: - View Capture Helper for Video Export
+
+/// A transparent UIViewRepresentable that provides access to its parent UIView.
+/// Used by the video export engine to capture frames from the visible view hierarchy.
+struct ViewCaptureHelper: UIViewRepresentable {
+    var onViewReady: (UIView) -> Void
+    
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // Walk up to the root view of the window (the full-screen content view)
+        DispatchQueue.main.async {
+            if let rootView = uiView.window?.rootViewController?.view {
+                onViewReady(rootView)
+            }
         }
     }
 }

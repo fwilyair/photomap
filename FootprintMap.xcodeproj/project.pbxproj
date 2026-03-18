@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		258379F9A2DA2065D0C7A546 /* CoordinateConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */; };
+		3B6217CBADADAC236E9B4183 /* FrameCaptureUtility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D021045E285BC94D0BDB498 /* FrameCaptureUtility.swift */; };
 		3C8517A7CCFC0ECD49133DFF /* SmartCollectionsGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */; };
 		3CC4617DCB235C2284E5EA2D /* MapboxMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090EC21C20B810688F6B7058 /* MapboxMapView.swift */; };
 		402C056B11AE61D8CC600C73 /* MapStyleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */; };
@@ -16,6 +17,10 @@
 		754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */; };
 		987C36FFB14D4E34CD1DF256 /* PlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */; };
 		B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */; };
+		C68F8DE29D2C457A6032DD96 /* VideoExportEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4099D8DE3E5C4269DA1F4B83 /* VideoExportEngine.swift */; };
+		CE309859CD4F9750CE3D4E37 /* BackgroundVideoSynthesizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E913A7D2D99C1E186F7A84E3 /* BackgroundVideoSynthesizer.swift */; };
+		D1850647E0A565FB83ED2E16 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4346E724CCC474E29584B642 /* ExportSettingsView.swift */; };
+		D8948C79AB7572D258266685 /* CinematicExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD3B1DFFD4B8C8B9F33C431 /* CinematicExportRenderer.swift */; };
 		E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */; };
 		EEB49BCFED48E85F8A36C034 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 37AA571A378D07F642DAC6AC /* MapboxMaps */; };
 /* End PBXBuildFile section */
@@ -23,13 +28,18 @@
 /* Begin PBXFileReference section */
 		090EC21C20B810688F6B7058 /* MapboxMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapboxMapView.swift; sourceTree = "<group>"; };
 		0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapStyleManager.swift; sourceTree = "<group>"; };
+		4099D8DE3E5C4269DA1F4B83 /* VideoExportEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoExportEngine.swift; sourceTree = "<group>"; };
+		4346E724CCC474E29584B642 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
 		5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateConverter.swift; sourceTree = "<group>"; };
+		5D021045E285BC94D0BDB498 /* FrameCaptureUtility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameCaptureUtility.swift; sourceTree = "<group>"; };
 		752506D7891C648ADDD56748 /* FootprintMap.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FootprintMap.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A7ACBA6FBE014B70B302419 /* PhotoGalleryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGalleryViews.swift; sourceTree = "<group>"; };
 		7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
+		8DD3B1DFFD4B8C8B9F33C431 /* CinematicExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinematicExportRenderer.swift; sourceTree = "<group>"; };
 		925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintHomeView.swift; sourceTree = "<group>"; };
 		CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintMapApp.swift; sourceTree = "<group>"; };
 		D5599BCA78B1E7B317DA1EBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E913A7D2D99C1E186F7A84E3 /* BackgroundVideoSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundVideoSynthesizer.swift; sourceTree = "<group>"; };
 		E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartCollectionsGalleryView.swift; sourceTree = "<group>"; };
 		EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMapViews.swift; sourceTree = "<group>"; };
 		F719F5AD700BE27D0101BF99 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -67,9 +77,13 @@
 			isa = PBXGroup;
 			children = (
 				F719F5AD700BE27D0101BF99 /* Assets.xcassets */,
+				E913A7D2D99C1E186F7A84E3 /* BackgroundVideoSynthesizer.swift */,
+				8DD3B1DFFD4B8C8B9F33C431 /* CinematicExportRenderer.swift */,
 				5727EA09CD2CE15561C729CB /* CoordinateConverter.swift */,
+				4346E724CCC474E29584B642 /* ExportSettingsView.swift */,
 				925EB0DDE467CCF94B2A3B75 /* FootprintHomeView.swift */,
 				CAD6585D1AF999FAEFF50624 /* FootprintMapApp.swift */,
+				5D021045E285BC94D0BDB498 /* FrameCaptureUtility.swift */,
 				D5599BCA78B1E7B317DA1EBB /* Info.plist */,
 				090EC21C20B810688F6B7058 /* MapboxMapView.swift */,
 				0CA1EB0FE47987CB9607ED93 /* MapStyleManager.swift */,
@@ -77,6 +91,7 @@
 				EDC4D545B115B5A7D3A50D65 /* PhotoMapViews.swift */,
 				7ED74ABA6C5B1A0F7B29A4D6 /* PlaybackController.swift */,
 				E92F83F9AD7C0473003B123B /* SmartCollectionsGalleryView.swift */,
+				4099D8DE3E5C4269DA1F4B83 /* VideoExportEngine.swift */,
 			);
 			path = FootprintMap;
 			sourceTree = "<group>";
@@ -150,15 +165,20 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE309859CD4F9750CE3D4E37 /* BackgroundVideoSynthesizer.swift in Sources */,
+				D8948C79AB7572D258266685 /* CinematicExportRenderer.swift in Sources */,
 				258379F9A2DA2065D0C7A546 /* CoordinateConverter.swift in Sources */,
+				D1850647E0A565FB83ED2E16 /* ExportSettingsView.swift in Sources */,
 				E0992C8623F03FC52C660600 /* FootprintHomeView.swift in Sources */,
 				53760320BAB5F2F4FECFB66A /* FootprintMapApp.swift in Sources */,
+				3B6217CBADADAC236E9B4183 /* FrameCaptureUtility.swift in Sources */,
 				402C056B11AE61D8CC600C73 /* MapStyleManager.swift in Sources */,
 				3CC4617DCB235C2284E5EA2D /* MapboxMapView.swift in Sources */,
 				B00B3D0F6E6858FA57113955 /* PhotoGalleryViews.swift in Sources */,
 				754FB0E49233D6A54A289D78 /* PhotoMapViews.swift in Sources */,
 				987C36FFB14D4E34CD1DF256 /* PlaybackController.swift in Sources */,
 				3C8517A7CCFC0ECD49133DFF /* SmartCollectionsGalleryView.swift in Sources */,
+				C68F8DE29D2C457A6032DD96 /* VideoExportEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
