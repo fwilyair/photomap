@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案3: 3D 地图俯瞰</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', sans-serif; background: #0a0a0a; color: #e0e0e0; }
+  .header {
+    padding: 24px 32px;
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .header h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .header .subtitle { font-size: 13px; color: rgba(255,255,255,0.5); line-height: 1.6; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; margin-right: 6px; margin-top: 8px; }
+  .tag.pro { background: rgba(52,199,89,0.15); color: #34c759; }
+  .tag.con { background: rgba(255,69,58,0.15); color: #ff453a; }
+  .map-container { width: 100%; height: calc(100vh - 180px); }
+  .map-container iframe { width: 100%; height: 100%; border: none; }
+  .footer {
+    padding: 16px 32px;
+    background: #111;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 12px; color: rgba(255,255,255,0.35);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>方案 C：3D 地图俯瞰</h1>
+    <div class="subtitle">从空中俯视 3D 建筑模型，鸟瞰式重温拍摄位置。可通过 Apple Maps 3D 或 Google Earth 实现。</div>
+    <span class="tag pro">✓ 视觉震撼</span>
+    <span class="tag pro">✓ 苹果原生支持</span>
+    <span class="tag pro">✓ 大城市精细建模</span>
+    <span class="tag con">✗ 非街景视角</span>
+    <span class="tag con">✗ 小城市/乡村无3D</span>
+  </div>
+  <div class="map-container">
+    <!-- Google Earth 3D 鸟瞰 - 上海外滩 -->
+    <iframe src="https://earth.google.com/web/@31.2397,121.4900,10a,500d,35y,45h,60t,0r" allowfullscreen loading="lazy"></iframe>
+  </div>
+  <div class="footer">
+    体验说明：拖动旋转，按住 Ctrl/Cmd + 拖动倾斜视角，滚轮缩放。这是从空中俯瞰 3D 建筑的效果。
+  </div>
+</body>
+</html>

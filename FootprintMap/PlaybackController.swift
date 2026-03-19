@@ -366,8 +366,14 @@ class PlaybackController {
             }
             
         case .montage:
-            let montageElapsed = CACurrentMediaTime() - montageStartTime
-            if montageElapsed >= montageDuration {
+            let now = CACurrentMediaTime()
+            let montageElapsed = now - montageStartTime
+            
+            if montageElapsed < 0 {
+                // In dedicated fade-in period
+                montageProgress = 0.0
+                updateMontageAssetForElapsed(0)
+            } else if montageElapsed >= montageDuration {
                 montageProgress = 1.0
                 finishMontage()
             } else {
@@ -380,13 +386,16 @@ class PlaybackController {
         }
     }
     
+    private let montageFadeInDuration: TimeInterval = 1.2
+
     private func finishTrajectory() {
         self.progress = 1.0
         self.currentFlashbackAsset = nil
         
         if montageDuration > 0 && !montageAssets.isEmpty {
             state = .montage
-            montageStartTime = CACurrentMediaTime()
+            // Shift start time into the future to allow for a dedicated fade-in period
+            montageStartTime = CACurrentMediaTime() + montageFadeInDuration
             updateMontageAssetForElapsed(0)
         } else {
             state = .finished
@@ -395,9 +404,48 @@ class PlaybackController {
     }
     
     private func finishMontage() {
-        self.currentMontageAsset = nil
+        // Keep currentMontageAsset so the last photo stays visible
         self.state = .finished
         stopDisplayLink()
+    }
+    
+    /// Replay only the final photo montage
+    func replayMontage() {
+        guard montageDuration > 0 && !montageAssets.isEmpty else { return }
+        
+        // Reset montage state
+        self.state = .montage
+        self.montageProgress = 0.0
+        // Set start time with fade-in delay
+        self.montageStartTime = CACurrentMediaTime() + montageFadeInDuration
+        self.isMontagePaused = false
+        self.montagePausedElapsed = 0.0
+        
+        // Ensure display link is running
+        startDisplayLink()
+        
+        // Show first asset immediately
+        updateMontageAssetForElapsed(0)
+    }
+    
+    /// Manual navigation for montage browse
+    func setMontageIndex(_ index: Int) {
+        let count = montageAssets.count
+        guard count > 0 else { return }
+        
+        let clampedIndex = max(0, min(count - 1, index))
+        currentMontageAsset = montageAssets[clampedIndex]
+    }
+    
+    var currentMontageIndex: Int {
+        guard let current = currentMontageAsset else { return 0 }
+        return montageAssets.firstIndex(where: { $0.id == current.id }) ?? 0
+    }
+    
+    /// Restart the entire journey from the beginning
+    func resetAndPlay() {
+        stop() // Reset progress, state, and assets
+        play() // Start preparation -> playback -> montage
     }
     
     private func updateFlashbackAssetForCurrentProgress() {

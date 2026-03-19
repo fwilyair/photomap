@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案2: Apple Look Around 街景</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', sans-serif; background: #0a0a0a; color: #e0e0e0; }
+  .header {
+    padding: 24px 32px;
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .header h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .header .subtitle { font-size: 13px; color: rgba(255,255,255,0.5); line-height: 1.6; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; margin-right: 6px; margin-top: 8px; }
+  .tag.pro { background: rgba(52,199,89,0.15); color: #34c759; }
+  .tag.con { background: rgba(255,69,58,0.15); color: #ff453a; }
+  .map-container { width: 100%; height: calc(100vh - 180px); position: relative; }
+  .map-container iframe { width: 100%; height: 100%; border: none; }
+  .overlay {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(20px);
+    z-index: 10;
+  }
+  .overlay .icon { font-size: 64px; margin-bottom: 16px; }
+  .overlay h2 { font-size: 22px; font-weight: 600; color: #fff; margin-bottom: 12px; }
+  .overlay p { font-size: 14px; color: rgba(255,255,255,0.6); max-width: 500px; text-align: center; line-height: 1.7; margin-bottom: 20px; }
+  .overlay .btn {
+    padding: 10px 24px; border-radius: 20px; background: #0a84ff; color: #fff;
+    font-size: 14px; font-weight: 500; border: none; cursor: pointer; text-decoration: none;
+  }
+  .feature-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    max-width: 500px; margin-top: 24px;
+  }
+  .feature-card {
+    padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+  }
+  .feature-card h3 { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .feature-card p { font-size: 11px; color: rgba(255,255,255,0.4); line-height: 1.5; }
+  .footer {
+    padding: 16px 32px;
+    background: #111;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 12px; color: rgba(255,255,255,0.35);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>方案 B：Apple Look Around</h1>
+    <div class="subtitle">苹果原生街景服务，iOS 集成最自然，无需第三方 API，但覆盖范围有限。</div>
+    <span class="tag pro">✓ 原生集成</span>
+    <span class="tag pro">✓ 零API成本</span>
+    <span class="tag pro">✓ 体验最流畅</span>
+    <span class="tag con">✗ 覆盖范围有限</span>
+    <span class="tag con">✗ 国内覆盖极少</span>
+  </div>
+  <div class="map-container">
+    <!-- Apple Look Around 是 iOS 原生功能，无法在网页中嵌入。这里展示说明。 -->
+    <iframe src="https://maps.apple.com/?ll=35.6594,139.7005&spn=0.002,0.002&t=m" allowfullscreen loading="lazy"></iframe>
+    <div class="overlay">
+      <div class="icon">🍎</div>
+      <h2>Apple Look Around</h2>
+      <p>这是 iOS 原生的街景体验，只能在 iPhone/iPad 上通过 MapKit 的 <code>MKLookAroundViewController</code> 调用。无法在网页中展示，但可以在 Apple 地图 App 中体验。</p>
+      <a class="btn" href="maps://?ll=35.6594,139.7005&t=m">在 Apple 地图中打开 →</a>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h3>📱 原生集成</h3>
+          <p>直接使用 MKLookAroundScene API，无需额外配置或 API Key。</p>
+        </div>
+        <div class="feature-card">
+          <h3>🎨 体验一致</h3>
+          <p>视觉风格与 iOS 系统完美融合，过渡动画流畅自然。</p>
+        </div>
+        <div class="feature-card">
+          <h3>💰 免费</h3>
+          <p>无 API 调用费用，无请求限制，无需注册开发者账号。</p>
+        </div>
+        <div class="feature-card">
+          <h3>🌍 覆盖有限</h3>
+          <p>目前主要覆盖欧美和日本部分城市，国内覆盖极少。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer">
+    Apple Look Around 需在 iOS 设备上体验。请点击上方按钮在 Apple 地图 App 中查看。
+  </div>
+</body>
+</html>

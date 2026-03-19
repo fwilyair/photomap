@@ -894,18 +894,17 @@ struct FootprintMapView: View {
     
     @ViewBuilder
     private var montageOverlay: some View {
-        if playbackController.state == .montage {
+        if playbackController.state == .montage || (playbackController.state == .finished && playbackController.currentMontageAsset != nil) {
             ZStack {
                 Color.black.ignoresSafeArea()
                     .transition(.opacity.animation(.easeInOut(duration: 0.6)))
-                
-                if let asset = playbackController.currentMontageAsset {
+                               if let asset = playbackController.currentMontageAsset {
                     if let image = thumbnailLoader.thumbnails[asset.id] {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
                             .ignoresSafeArea()
-                            .id(asset.id)
+                            // Removed .id(asset.id) and .transition to ensure instant photo swaps
                     } else {
                         ProgressView()
                             .tint(.white)
@@ -915,7 +914,7 @@ struct FootprintMapView: View {
                     }
                 }
                 
-                // Tap to show/hide controls
+                // Tap to show/hide controls (During montage OR when finished)
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -924,20 +923,18 @@ struct FootprintMapView: View {
                         }
                     }
                 
-                // Montage controls with progress bar
-                if showMontageControls {
+                // Active Montage Controls (Progress bar shown only during playback)
+                if showMontageControls && playbackController.state == .montage {
                     VStack(spacing: 16) {
                         Spacer()
                         
                         // Draggable progress bar
                         GeometryReader { barGeo in
                             ZStack(alignment: .leading) {
-                                // Track
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .fill(Color.white.opacity(0.2))
                                     .frame(height: 3)
                                 
-                                // Fill
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .fill(Color.orange)
                                     .frame(width: barGeo.size.width * CGFloat(playbackController.montageProgress), height: 3)
@@ -955,8 +952,7 @@ struct FootprintMapView: View {
                         .frame(height: 24)
                         .padding(.horizontal, 32)
                         
-                        // Controls: stop(left) play/pause(right)
-                        HStack(spacing: 16) {
+                        HStack(spacing: 24) {
                             Button(action: {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 withAnimation(.spring()) {
@@ -965,14 +961,14 @@ struct FootprintMapView: View {
                                 }
                             }) {
                                 Image(systemName: "stop.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.white.opacity(0.8))
-                                    .frame(width: 44, height: 44)
-                                    .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .frame(width: 54, height: 54)
+                                    .background(Circle().fill(.ultraThinMaterial))
                             }
                             
                             Button(action: {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                                 if playbackController.isMontagePaused {
                                     playbackController.resumeMontage()
                                 } else {
@@ -980,19 +976,84 @@ struct FootprintMapView: View {
                                 }
                             }) {
                                 Image(systemName: playbackController.isMontagePaused ? "play.fill" : "pause.fill")
-                                    .font(.system(size: 20, weight: .semibold))
+                                    .font(.system(size: 20, weight: .bold))
                                     .foregroundColor(.orange)
-                                    .frame(width: 44, height: 44)
-                                    .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                                    .frame(width: 54, height: 54)
+                                    .background(Circle().fill(.ultraThinMaterial))
                             }
                         }
-                        .padding(.bottom, 60)
+                        .padding(.bottom, 80)
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .environment(\.colorScheme, .dark)
+                }
+                
+                // Final Screen Buttons (Swapped: Exit on left, Replay on right)
+                if showMontageControls && playbackController.state == .finished && playbackController.currentMontageAsset != nil {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 56) {
+                            // Exit (Left)
+                            Button(action: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.spring()) {
+                                    playbackController.stop()
+                                }
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .frame(width: 64, height: 64)
+                                    .background(ZStack { Circle().fill(Color.white.opacity(0.08)); Circle().fill(.ultraThinMaterial) })
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(LinearGradient(colors: [.white.opacity(0.25), .white.opacity(0.02)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+                                    .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 6)
+                            }
+                            
+                            // Replay (Right)
+                            Button(action: {
+                                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.82)) {
+                                    playbackController.replayMontage()
+                                }
+                            }) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundColor(.orange)
+                                    .frame(width: 64, height: 64)
+                                    .background(ZStack { Circle().fill(Color.white.opacity(0.1)); Circle().fill(.ultraThinMaterial) })
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
+                                    .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+                            }
+                        }
+                        .padding(.bottom, 120)
+                    }
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .bottom)).animation(.easeInOut(duration: 1.2)),
+                        removal: .opacity
+                    ))
                 }
             }
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        guard playbackController.state == .finished else { return }
+                        if value.translation.width > 50 {
+                            // Swipe Right -> Previous
+                            withAnimation(.easeInOut) {
+                                playbackController.setMontageIndex(playbackController.currentMontageIndex - 1)
+                            }
+                        } else if value.translation.width < -50 {
+                            // Swipe Left -> Next
+                            withAnimation(.easeInOut) {
+                                playbackController.setMontageIndex(playbackController.currentMontageIndex + 1)
+                            }
+                        }
+                    }
+            )
             .zIndex(100)
-            .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+            .transition(.opacity.animation(.easeInOut(duration: 1.2)))
         }
     }
     

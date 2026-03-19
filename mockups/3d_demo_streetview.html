@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方案1: Google Street View 街景全景</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', sans-serif; background: #0a0a0a; color: #e0e0e0; }
+  .header {
+    padding: 24px 32px;
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .header h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .header .subtitle { font-size: 13px; color: rgba(255,255,255,0.5); line-height: 1.6; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; margin-right: 6px; margin-top: 8px; }
+  .tag.pro { background: rgba(52,199,89,0.15); color: #34c759; }
+  .tag.con { background: rgba(255,69,58,0.15); color: #ff453a; }
+  .map-container { width: 100%; height: calc(100vh - 180px); }
+  .map-container iframe { width: 100%; height: 100%; border: none; }
+  .footer {
+    padding: 16px 32px;
+    background: #111;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 12px; color: rgba(255,255,255,0.35);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>方案 A：Google Street View 街景全景</h1>
+    <div class="subtitle">站在地面上，360° 环顾四周。覆盖率高（城市地区），国内需用百度全景替代。</div>
+    <span class="tag pro">✓ 覆盖广</span>
+    <span class="tag pro">✓ 沉浸感强</span>
+    <span class="tag con">✗ 国内需百度</span>
+    <span class="tag con">✗ 依赖第三方API</span>
+  </div>
+  <div class="map-container">
+    <!-- 东京涩谷十字路口 Street View 全景 -->
+    <iframe src="https://www.google.com/maps/embed?pb=!4v1710000000000!6m8!1m7!1sCAoSLEFGMVFpcE5fWnE3M1hfRXE5T0JMZGZ0QWl1dVBrOUVYbVd6dWd3bFBv!2m2!1d35.6594!2d139.7005!3f220!4f0!5f0.7820865974627469" allowfullscreen loading="lazy"></iframe>
+  </div>
+  <div class="footer">
+    体验说明：拖动鼠标可 360° 旋转视角，滚轮缩放。这就是用户点击照片后看到的效果。
+  </div>
+</body>
+</html>
