@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MapKit
 import CoreLocation
 import Photos
@@ -694,52 +695,31 @@ struct FootprintMapView: View {
     // Video Export V4
     @State private var exportSynthesizer = BackgroundVideoSynthesizer()
     @State private var isShowingExportProgress = false
+    @State private var showExportToast = false
     
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Map Layer — dual engine: Apple MapKit or Mapbox
-            if mapStyleManager.currentStyle.isApple {
-                PhotoClusterMapView(
-                    photos: filteredPhotos,
-                    waypoints: waypoints,
-                    playbackProgress: playbackController.progress,
-                    playbackDuration: playbackController.duration,
-                    isPlaying: playbackController.isPlaying,
-                    isPreparing: playbackController.isPreparing,
-                    mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
-                    isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
-                    onAnnotationSelected: { ids, point in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
-                        }
-                        thumbnailLoader.loadThumbnails(for: ids)
-                    },
-                    onWaypointLitUp: { wpIndex in
-                        playbackController.showFlashbackForWaypoint(index: wpIndex)
+            // Map Layer — Apple MapKit (sole engine)
+            PhotoClusterMapView(
+                photos: filteredPhotos,
+                waypoints: waypoints,
+                playbackProgress: playbackController.progress,
+                playbackDuration: playbackController.duration,
+                isPlaying: playbackController.isPlaying,
+                isPreparing: playbackController.isPreparing,
+                mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : (mapStyleManager.currentStyle == .appleHybrid ? .hybrid : .standard),
+                isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
+                onAnnotationSelected: { ids, point in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                        selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
                     }
-                )
-                .ignoresSafeArea(edges: [.bottom, .horizontal])
-            } else if let styleURI = mapStyleManager.currentStyle.mapboxStyleURI {
-                MapboxMapWrapperView(
-                    photos: filteredPhotos,
-                    waypoints: waypoints,
-                    styleURI: styleURI,
-                    playbackProgress: playbackController.progress,
-                    playbackDuration: playbackController.duration,
-                    isPlaying: playbackController.isPlaying,
-                    isPreparing: playbackController.isPreparing,
-                    onAnnotationSelected: { ids, point in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                            selectedAnnotation = SelectedAnnotationInfo(photoIDs: ids, screenPoint: point)
-                        }
-                        thumbnailLoader.loadThumbnails(for: ids)
-                    },
-                    onWaypointLitUp: { wpIndex in
-                        playbackController.showFlashbackForWaypoint(index: wpIndex)
-                    }
-                )
-                .ignoresSafeArea(edges: [.bottom, .horizontal])
-            }
+                    thumbnailLoader.loadThumbnails(for: ids)
+                },
+                onWaypointLitUp: { wpIndex in
+                    playbackController.showFlashbackForWaypoint(index: wpIndex)
+                }
+            )
+            .ignoresSafeArea(edges: [.bottom, .horizontal])
             
             playbackControls
                 .opacity(selectedAnnotation != nil ? 0 : 1)
@@ -897,6 +877,7 @@ struct FootprintMapView: View {
                 FullScreenPhotoView(photoIDs: fullScreenPhotoIDs, initialPhotoID: id, thumbnailLoader: thumbnailLoader)
             }
         }
+        /* Video Export Disabled
         .sheet(isPresented: Binding(
             get: {
                 if case .completed = exportSynthesizer.status { return true }
@@ -905,10 +886,20 @@ struct FootprintMapView: View {
             set: { if !$0 { exportSynthesizer.reset() } }
         )) {
             if case .completed(let url) = exportSynthesizer.status {
-                ShareSheet(url: url)
-                    .presentationDetents([.medium, .large])
+                ShareSheet(url: url) {
+                    withAnimation(.spring()) {
+                        showExportToast = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        withAnimation {
+                            showExportToast = false
+                        }
+                    }
+                }
+                    .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
             }
         }
+        */
         .sheet(isPresented: $isShowingSmartCollections) {
             SmartCollectionsGalleryView(onSelect: { collection in
                 withAnimation {
@@ -919,6 +910,21 @@ struct FootprintMapView: View {
             })
             .environment(photoManager)
         }
+        /* Export Toast Disabled
+        .overlay(alignment: .top) {
+            if showExportToast {
+                Text("旅途愉快")
+                    .font(.subheadline.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(Color.green.opacity(0.9)))
+                    .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, 60)
+            }
+        }
+        */
     }
     
     @ViewBuilder
@@ -1069,6 +1075,8 @@ struct FootprintMapView: View {
                                     .overlay(Circle().stroke(LinearGradient(colors: [.white.opacity(0.25), .white.opacity(0.02)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5))
                                     .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 6)
                             }
+                            /* Export Hidden - Spacing adjustment */
+                            Spacer().frame(width: 1)
                             
                             // Replay (Right)
                             Button(action: {
@@ -1293,6 +1301,7 @@ struct FootprintMapView: View {
                 }
                 .frame(width: 44, height: 44)
                 
+                /* Export Logic Disabled
                 Button(action: {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     exportSynthesizer.startSynthesis(
@@ -1310,6 +1319,7 @@ struct FootprintMapView: View {
                 .frame(width: 44, height: 44)
                 .disabled(waypoints.isEmpty || exportSynthesizer.status.isActive)
                 .opacity(waypoints.isEmpty ? 0.3 : 1.0)
+                */
                 
                 Button(action: {
                     filterBounceTrigger += 1
@@ -1322,7 +1332,7 @@ struct FootprintMapView: View {
                 }
                 .frame(width: 44, height: 44)
             }
-            .padding(.trailing, 60) // Extra padding to avoid Mapbox compass
+            .padding(.trailing, 12)
         }
         .padding(.horizontal, 8)
         .frame(height: 44)
@@ -1550,7 +1560,7 @@ struct MapLayerPickerSheet: View {
     ]
     
     var allStyles: [MapStyleOption] {
-        MapStyleOption.appleStyles + MapStyleOption.mapboxStyles
+        MapStyleOption.allStyles
     }
     
     var body: some View {
@@ -2093,4 +2103,22 @@ struct PhotoDateCalendarView: UIViewRepresentable {
             parent.selectedDate = date
         }
     }
+}
+
+// MARK: - Video Export Helpers
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    var onComplete: (() -> Void)? = nil
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.completionWithItemsHandler = { activityType, completed, returnedItems, error in
+            if completed {
+                onComplete?()
+            }
+        }
+        return controller
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

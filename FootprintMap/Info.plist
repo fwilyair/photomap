@@ -18,8 +18,6 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>MBXAccessToken</key>
-	<string>pk.eyJ1IjoiZndpbHlhaXIiLCJhIjoiY2t2a2RrMm5zOTEyZzJ4cGd0NW5hZ3Q4ZyJ9.0O0AYCoxsOCcfc__Sr24VA</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>需要相册访问权限以生成热力图</string>
 	<key>UILaunchScreen</key>

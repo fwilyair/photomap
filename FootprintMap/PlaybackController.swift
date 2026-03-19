@@ -57,7 +57,7 @@ class PlaybackController {
     }
     private var pathSegments: [SegmentTiming] = []
     private var montageAssets: [PhotoAsset] = []
-    private var montageDuration: TimeInterval = 0.0
+    var montageDuration: TimeInterval = 0.0
     private var montageStartTime: TimeInterval = 0.0
     // Per-photo cumulative end times for time-weighted montage pacing
     private var montageSliceEndTimes: [TimeInterval] = []
