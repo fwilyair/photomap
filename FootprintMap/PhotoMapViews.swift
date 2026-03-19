@@ -354,10 +354,11 @@ struct PhotoClusterer {
 struct PhotoClusterMapView: UIViewRepresentable {
     var photos: [PhotoAsset]
     var waypoints: [Waypoint]
-    var playbackProgress: Double  // State dependency to trigger `updateUIView` automatically
+    var playbackProgress: Double
     var playbackDuration: TimeInterval
     var isPlaying: Bool
     var isPreparing: Bool
+    var isFlashbackActive: Bool = false  // 3D Memory Sandbox: triggers pitch dive
     var mapType: MKMapType = .standard
     var isGCJ02Required: Bool = false
     var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
@@ -376,6 +377,13 @@ struct PhotoClusterMapView: UIViewRepresentable {
         var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
         var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
         var isPlayingOrPreparing = false
+        
+        // 3D Memory Sandbox state
+        var currentPitch: CGFloat = 0
+        var targetPitch: CGFloat = 0
+        var currentHeading: CLLocationDirection = 0
+        var isFlashbackActive = false
+        var flashbackAltitudeMultiplier: Double = 1.0 // Lower = closer to ground during flashback
         
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
@@ -417,7 +425,12 @@ struct PhotoClusterMapView: UIViewRepresentable {
         mapView.showsCompass = true
         mapView.mapType = mapType
         mapView.showsScale = true
-        mapView.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: .flat, emphasisStyle: .muted)
+        mapView.showsBuildings = true
+        
+        // Enable 3D building rendering with realistic elevation
+        let config = MKStandardMapConfiguration(elevationStyle: .realistic, emphasisStyle: .muted)
+        config.showsTraffic = false
+        mapView.preferredConfiguration = config
         
         mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "waypoint")
         
@@ -610,7 +623,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
                     }
                 }
             }
-            // Phase 3: Continuous Flight Camera Tracking
+            // Phase 3: Continuous Flight Camera Tracking with 3D Memory Sandbox
             else if playbackProgress > 0 && playbackProgress < 1.0 && splineCoords.count > 1 {
                 let pointCount = splineCoords.count
                 let targetIdxFloat = playbackProgress * Double(pointCount - 1)
@@ -628,7 +641,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 
                 let exactCurrentCoord = interpolateCoord(at: targetIdxFloat, in: splineCoords)
                 
-                let lookaheadSeconds = 0.8 // Tighter lookahead for faster localized sweeps
+                let lookaheadSeconds = 0.8
                 let lookaheadProgress = lookaheadSeconds / playbackDuration
                 let lookaheadIdxFloat = min(Double(pointCount - 1), targetIdxFloat + (lookaheadProgress * Double(pointCount - 1)))
                 let exactFutureCoord = interpolateCoord(at: lookaheadIdxFloat, in: splineCoords)
@@ -637,15 +650,42 @@ struct PhotoClusterMapView: UIViewRepresentable {
                     .distance(from: CLLocation(latitude: exactFutureCoord.latitude, longitude: exactFutureCoord.longitude))
                 
                 let baseAltitude: CLLocationDistance = 3000
-                let maxAltitude: CLLocationDistance = 600000 // Raised cap to 600km to tolerate cross-city caching
-                let targetAltitude = min(maxAltitude, max(baseAltitude, dist * 1.5)) // Raised multiplier slightly for visual transfer
+                let maxAltitude: CLLocationDistance = 600000
+                let targetAltitude = min(maxAltitude, max(baseAltitude, dist * 1.5))
                 
-                let currentAlt = context.coordinator.currentAltitude ?? uiView.camera.altitude
-                let lerpFactor = isPlaying ? 0.04 : 0.2 // Slightly faster lerp so camera keeps up vertically
-                let smoothedAltitude = currentAlt + (targetAltitude - currentAlt) * lerpFactor
-                context.coordinator.currentAltitude = smoothedAltitude
+                // 3D Memory Sandbox: pitch dive when flashback is active
+                let coord = context.coordinator
+                coord.targetPitch = isFlashbackActive ? 60.0 : 0.0
+                let altMultiplierTarget: Double = isFlashbackActive ? 0.3 : 1.0  // Dive to 30% altitude
                 
-                let newCamera = MKMapCamera(lookingAtCenter: exactCurrentCoord, fromDistance: smoothedAltitude, pitch: 0, heading: 0)
+                // Smooth lerp for pitch (feels cinematic, not jarring)
+                let pitchLerp: CGFloat = 0.06
+                coord.currentPitch += (coord.targetPitch - coord.currentPitch) * pitchLerp
+                
+                // Smooth lerp for altitude multiplier
+                coord.flashbackAltitudeMultiplier += (altMultiplierTarget - coord.flashbackAltitudeMultiplier) * 0.06
+                
+                // Gentle heading rotation during flashback for parallax feel
+                if isFlashbackActive {
+                    coord.currentHeading += 0.15  // Slow clockwise drift
+                    if coord.currentHeading >= 360 { coord.currentHeading -= 360 }
+                } else {
+                    // Smoothly return heading to 0 (north)
+                    coord.currentHeading += (0 - coord.currentHeading) * 0.05
+                }
+                
+                let currentAlt = coord.currentAltitude ?? uiView.camera.altitude
+                let adjustedTarget = targetAltitude * coord.flashbackAltitudeMultiplier
+                let lerpFactor = isPlaying ? 0.04 : 0.2
+                let smoothedAltitude = currentAlt + (adjustedTarget - currentAlt) * lerpFactor
+                coord.currentAltitude = smoothedAltitude
+                
+                let newCamera = MKMapCamera(
+                    lookingAtCenter: exactCurrentCoord,
+                    fromDistance: smoothedAltitude,
+                    pitch: coord.currentPitch,
+                    heading: coord.currentHeading
+                )
                 uiView.camera = newCamera
             }
         }
@@ -707,7 +747,8 @@ struct FootprintMapView: View {
                 playbackDuration: playbackController.duration,
                 isPlaying: playbackController.isPlaying,
                 isPreparing: playbackController.isPreparing,
-                mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : (mapStyleManager.currentStyle == .appleHybrid ? .hybrid : .standard),
+                isFlashbackActive: playbackController.currentFlashbackAsset != nil,
+                mapType: mapStyleManager.currentStyle == .appleSatellite ? .satellite : .standard,
                 isGCJ02Required: mapStyleManager.currentStyle.isGCJ02Required,
                 onAnnotationSelected: { ids, point in
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
