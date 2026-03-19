@@ -691,6 +691,10 @@ struct FootprintMapView: View {
     // Montage interaction
     @State private var showMontageControls = false
     
+    // Video Export V4
+    @State private var exportSynthesizer = BackgroundVideoSynthesizer()
+    @State private var isShowingExportProgress = false
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             // Map Layer — dual engine: Apple MapKit or Mapbox
@@ -743,6 +747,50 @@ struct FootprintMapView: View {
             
             flashbackOverlay
             montageOverlay
+            
+            // Video Export Progress HUD
+            if exportSynthesizer.status.isActive {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                    
+                    VStack(spacing: 20) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        
+                        VStack(spacing: 8) {
+                            Text("正在合成旅程视频...")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            if case .synthesizing(let progress) = exportSynthesizer.status {
+                                Text("\(Int(progress * 100))%")
+                                    .font(.system(size: 14, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.8))
+                                
+                                ProgressView(value: progress)
+                                    .progressViewStyle(.linear)
+                                    .frame(width: 200)
+                                    .tint(.orange)
+                            }
+                        }
+                        
+                        Button("取消") {
+                            // Cancel logic if needed, or just hide
+                            exportSynthesizer.reset()
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .padding(.top, 8)
+                    }
+                    .padding(32)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(.white.opacity(0.2), lineWidth: 0.5))
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .zIndex(200)
+            }
             
             // Hybrid Selection UI: Fan for small groups, Scrollable Tray for large ones
             if let selected = selectedAnnotation {
@@ -847,6 +895,18 @@ struct FootprintMapView: View {
         )) {
             if let id = fullScreenPhotoID {
                 FullScreenPhotoView(photoIDs: fullScreenPhotoIDs, initialPhotoID: id, thumbnailLoader: thumbnailLoader)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: {
+                if case .completed = exportSynthesizer.status { return true }
+                return false
+            },
+            set: { if !$0 { exportSynthesizer.reset() } }
+        )) {
+            if case .completed(let url) = exportSynthesizer.status {
+                ShareSheet(url: url)
+                    .presentationDetents([.medium, .large])
             }
         }
         .sheet(isPresented: $isShowingSmartCollections) {
@@ -1232,6 +1292,24 @@ struct FootprintMapView: View {
                         .foregroundColor(.primary)
                 }
                 .frame(width: 44, height: 44)
+                
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    exportSynthesizer.startSynthesis(
+                        waypoints: waypoints,
+                        photos: photos,
+                        style: mapStyleManager.currentStyle,
+                        duration: playbackController.duration,
+                        montageDuration: playbackController.montageDuration
+                    )
+                }) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 18))
+                        .foregroundColor(.primary)
+                }
+                .frame(width: 44, height: 44)
+                .disabled(waypoints.isEmpty || exportSynthesizer.status.isActive)
+                .opacity(waypoints.isEmpty ? 0.3 : 1.0)
                 
                 Button(action: {
                     filterBounceTrigger += 1
