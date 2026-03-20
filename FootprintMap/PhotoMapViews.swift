@@ -125,10 +125,21 @@ struct SplineRouteBuilder {
             return route
         }
         
-        // Catmull-Rom requires 4 points per segment. We duplicate endpoints to close the spline nicely.
-        var pts = [mapPoints[0]]
+        // Catmull-Rom requires 4 points per segment. We use virtual "dummy" endpoints extrapolated 
+        // from the first/last segments to ensure perfect curvature without numerical collapse.
+        var pts: [MKMapPoint] = []
+        let p0 = mapPoints[0]
+        let p1 = mapPoints[1]
+        let head = MKMapPoint(x: p0.x - (p1.x - p0.x) * 0.25, y: p0.y - (p1.y - p0.y) * 0.25)
+        
+        let pn = mapPoints.last!
+        let pn_1 = mapPoints[mapPoints.count - 2]
+        let tail = MKMapPoint(x: pn.x + (pn.x - pn_1.x) * 0.25, y: pn.y + (pn.y - pn_1.y) * 0.25)
+        
+        pts.append(head)
         pts.append(contentsOf: mapPoints)
-        pts.append(mapPoints.last!)
+        // Ensure the points were appended before adding tail
+        pts.append(tail)
         
         var smoothRoute: [CLLocationCoordinate2D] = []
         let steps = 20 // Points per spline segment for high-resolution curves
@@ -140,7 +151,7 @@ struct SplineRouteBuilder {
             let dy = p1.y - p0.y
             let distSq = dx*dx + dy*dy
             let a = pow(distSq, 0.25) // alpha = 0.5
-            return t + max(a, 0.0001) // Strict division by zero prevention
+            return t + max(a, 1.0) // Strict division by zero prevention
         }
         
         for i in 1..<(pts.count - 2) {
@@ -196,15 +207,16 @@ class SplineLayerManager {
         shapeLayer.strokeColor = UIColor.systemOrange.cgColor
         shapeLayer.fillColor = UIColor.clear.cgColor
         shapeLayer.lineWidth = 4.0
-        shapeLayer.lineCap = .round
+        shapeLayer.lineCap = .butt   // Changed from .round to avoid tip peeking ahead
         shapeLayer.lineJoin = .round
-        shapeLayer.strokeEnd = 1.0 // Fully draw whatever path is assigned
+        shapeLayer.strokeEnd = 1.0 
     }
     
     func updatePath(for splineCoords: [CLLocationCoordinate2D], in mapView: MKMapView, progressIndex: Double, isPlaying: Bool, isPreparing: Bool) {
-        // Respect current progress even when not playing (paused state).
-        // Total path will naturally show when progressIndex reaches the end.
-        let effectiveProgress = progressIndex
+        // Apply a small negative offset to ensure the line tip is always slightly "behind" 
+        // the camera focus point, instead of peeking ahead due to round cap or latency.
+        let effectiveProgress = max(0.0, progressIndex - 0.25)
+        
         
         guard splineCoords.count > 1 else {
             CATransaction.begin()
@@ -411,6 +423,20 @@ struct PhotoClusterMapView: UIViewRepresentable {
             let screenPoint = mapView.convert(wpAnn.coordinate, toPointTo: mapView)
             onAnnotationSelected?(wpAnn.photoIDs, screenPoint)
             mapView.deselectAnnotation(wpAnn, animated: false)
+        }
+
+        // Helper for Cinematic 3D Follow
+        func calculateBearing(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D) -> Double {
+            let lat1 = start.latitude * .pi / 180
+            let lon1 = start.longitude * .pi / 180
+            let lat2 = end.latitude * .pi / 180
+            let lon2 = end.longitude * .pi / 180
+            
+            let dLon = lon2 - lon1
+            let y = sin(dLon) * cos(lat2)
+            let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+            let bearing = atan2(y, x) * 180 / .pi
+            return (bearing + 360).truncatingRemainder(dividingBy: 360)
         }
     }
     
@@ -653,26 +679,46 @@ struct PhotoClusterMapView: UIViewRepresentable {
                 let maxAltitude: CLLocationDistance = 600000
                 let targetAltitude = min(maxAltitude, max(baseAltitude, dist * 1.5))
                 
-                // 3D Memory Sandbox: pitch dive when flashback is active
+                // 3D Follow Camera Logic: Always stay behind the trajectory with Weighted Smoothing
                 let coord = context.coordinator
-                coord.targetPitch = isFlashbackActive ? 60.0 : 0.0
-                let altMultiplierTarget: Double = isFlashbackActive ? 0.3 : 1.0  // Dive to 30% altitude
                 
-                // Smooth lerp for pitch (feels cinematic, not jarring)
-                let pitchLerp: CGFloat = 0.06
-                coord.currentPitch += (coord.targetPitch - coord.currentPitch) * pitchLerp
+                // 1. Calculate Average Bearing (weighted lookahead window) to smooth sharp turns
+                // Instead of one point, we sample several points in the near future
+                var totalTargetHeading = 0.0
+                let sampleCount = 5
+                let windowSeconds = 1.5 // 1.5s window for direction prediction
                 
-                // Smooth lerp for altitude multiplier
-                coord.flashbackAltitudeMultiplier += (altMultiplierTarget - coord.flashbackAltitudeMultiplier) * 0.06
-                
-                // Gentle heading rotation during flashback for parallax feel
-                if isFlashbackActive {
-                    coord.currentHeading += 0.15  // Slow clockwise drift
-                    if coord.currentHeading >= 360 { coord.currentHeading -= 360 }
-                } else {
-                    // Smoothly return heading to 0 (north)
-                    coord.currentHeading += (0 - coord.currentHeading) * 0.05
+                for i in 1...sampleCount {
+                    let sampleOffset = (windowSeconds / Double(sampleCount)) * Double(i)
+                    let sampleProgress = sampleOffset / playbackDuration
+                    let sampleIdxFloat = min(Double(pointCount - 1), targetIdxFloat + (sampleProgress * Double(pointCount - 1)))
+                    let sampleFutureCoord = interpolateCoord(at: sampleIdxFloat, in: splineCoords)
+                    
+                    let bearing = coord.calculateBearing(from: exactCurrentCoord, to: sampleFutureCoord)
+                    
+                    // First sample defines the initial reference for weighted averaging
+                    if i == 1 {
+                        totalTargetHeading = bearing
+                    } else {
+                        // Weighted average: points further ahead influence the heading more smoothly
+                        let hDiff = (bearing - totalTargetHeading + 540).truncatingRemainder(dividingBy: 360) - 180
+                        totalTargetHeading += hDiff / Double(i)
+                    }
                 }
+                
+                // 2. Heavy Gimbal Smoothing: Significantly lower lerp factor (0.03) for "weighty" cinematic feel
+                let headingDiff = totalTargetHeading - coord.currentHeading
+                let correctedDiff = ((headingDiff + 180).truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) - 180
+                coord.currentHeading += correctedDiff * 0.03
+                
+                // 3. Pitch: Constant cinematic tilt (60°), deeper dive (75°) during flashback
+
+                coord.targetPitch = isFlashbackActive ? 75.0 : 60.0
+                coord.currentPitch += (coord.targetPitch - coord.currentPitch) * 0.06
+                
+                // 4. Altitude: Lower dive during flashback for immersion
+                let altMultiplierTarget: Double = isFlashbackActive ? 0.35 : 1.0
+                coord.flashbackAltitudeMultiplier += (altMultiplierTarget - coord.flashbackAltitudeMultiplier) * 0.06
                 
                 let currentAlt = coord.currentAltitude ?? uiView.camera.altitude
                 let adjustedTarget = targetAltitude * coord.flashbackAltitudeMultiplier
