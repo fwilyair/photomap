@@ -90,28 +90,29 @@ class WaypointAnnotation: NSObject, MKAnnotation {
 
 struct SplineRouteBuilder {
     static func buildSmoothSpline(waypoints: [Waypoint], isGCJ02Required: Bool = false) -> [CLLocationCoordinate2D] {
-        // 1. Deduplicate waypoints that are effectively identical to prevent division by zero (infinite tangents)
-        var uniqueWaypoints: [Waypoint] = []
+        // 1. Data Cleaning: Filter out invalid GPS jump points (0,0) and deduplicate close points
+        var cleanedWaypoints: [Waypoint] = []
         for wp in waypoints {
-            let wpCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: wp.coordinate) : wp.coordinate
-            if let last = uniqueWaypoints.last {
-                let lastCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: last.coordinate) : last.coordinate
-                let dist = CLLocation(latitude: wpCoord.latitude, longitude: wpCoord.longitude)
-                    .distance(from: CLLocation(latitude: lastCoord.latitude, longitude: lastCoord.longitude))
-                if dist > 100.0 {
-                    uniqueWaypoints.append(wp)
+            let coord = wp.coordinate
+            if abs(coord.latitude) < 0.001 && abs(coord.longitude) < 0.001 { continue }
+            
+            if let last = cleanedWaypoints.last {
+                let lastCoord = last.coordinate
+                let dist = CLLocation(latitude: lastCoord.latitude, longitude: lastCoord.longitude)
+                    .distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude))
+                if dist > 5.0 { 
+                    cleanedWaypoints.append(wp)
                 }
             } else {
-                uniqueWaypoints.append(wp)
+                cleanedWaypoints.append(wp)
             }
         }
         
-        guard uniqueWaypoints.count > 1 else {
-            return uniqueWaypoints.map { isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate }
+        guard cleanedWaypoints.count > 1 else {
+            return cleanedWaypoints.map { isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate }
         }
         
-        // Convert to MKMapPoint for perfect Cartesian 2D interpolation, avoiding spherical distortion
-        let mapPoints = uniqueWaypoints.map { MKMapPoint(isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate) }
+        let mapPoints = cleanedWaypoints.map { MKMapPoint(isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: $0.coordinate) : $0.coordinate) }
         
         if mapPoints.count == 2 {
             var route: [CLLocationCoordinate2D] = []
@@ -202,6 +203,7 @@ struct SplineRouteBuilder {
 // We use a hardware-accelerated CAShapeLayer overlaid directly on the MapView.
 class SplineLayerManager {
     let shapeLayer = CAShapeLayer()
+    private let layerName = "PhotoTrailPathLayer"
     
     init() {
         shapeLayer.strokeColor = UIColor.systemOrange.cgColor
@@ -210,6 +212,7 @@ class SplineLayerManager {
         shapeLayer.lineCap = .butt   // Changed from .round to avoid tip peeking ahead
         shapeLayer.lineJoin = .round
         shapeLayer.strokeEnd = 1.0 
+        shapeLayer.name = layerName
     }
     
     func updatePath(for splineCoords: [CLLocationCoordinate2D], in mapView: MKMapView, progressIndex: Double, isPlaying: Bool, isPreparing: Bool) {
@@ -239,26 +242,51 @@ class SplineLayerManager {
         CATransaction.setDisableActions(true)
         
         let path = CGMutablePath()
-        let firstCGPoint = mapView.convert(splineCoords[0], toPointTo: mapView)
-        path.move(to: firstCGPoint)
         
-        let maxIndex = min(splineCoords.count - 1, Int(ceil(effectiveProgress)))
-        if maxIndex > 0 {
-            for i in 1...maxIndex {
-                if i == maxIndex {
-                    // Precise interpolation of the tip of the line
-                    let prev = splineCoords[i - 1]
-                    let curr = splineCoords[i]
-                    let remainder = effectiveProgress - Double(i - 1)
-                    let lat = prev.latitude + (curr.latitude - prev.latitude) * remainder
-                    let lon = prev.longitude + (curr.longitude - prev.longitude) * remainder
-                    let exactEnd = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                    let cgPoint = mapView.convert(exactEnd, toPointTo: mapView)
-                    path.addLine(to: cgPoint)
+        let targetIdx = Int(ceil(effectiveProgress))
+        
+        // 3D Rendering Optimization: Sliding Window
+        let windowSize = 200 
+        let startIdx = max(0, targetIdx - windowSize)
+        let maxIndex = min(splineCoords.count - 1, targetIdx)
+        
+        guard maxIndex >= 0 else { return }
+        
+        // Pixel Culling: Bound points within a safe screen multiple to prevent 3D projection "lasers"
+        let safeLimit = max(mapView.bounds.width, mapView.bounds.height) * 2.5
+        func isPointSafe(_ p: CGPoint) -> Bool {
+            p.x.isFinite && p.y.isFinite && abs(p.x) < safeLimit && abs(p.y) < safeLimit
+        }
+        
+        var pathStarted = false
+        
+        for i in startIdx...maxIndex {
+            let c = splineCoords[i]
+            if abs(c.latitude) < 0.001 && abs(c.longitude) < 0.001 { continue }
+            
+            var pointToDraw: CGPoint
+            if i == maxIndex && i > 0 {
+                let prev = splineCoords[i - 1]
+                let curr = splineCoords[i]
+                let remainder = effectiveProgress - Double(i - 1)
+                let lat = prev.latitude + (curr.latitude - prev.latitude) * remainder
+                let lon = prev.longitude + (curr.longitude - prev.longitude) * remainder
+                let exactEnd = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                pointToDraw = mapView.convert(exactEnd, toPointTo: mapView)
+            } else {
+                pointToDraw = mapView.convert(c, toPointTo: mapView)
+            }
+            
+            if isPointSafe(pointToDraw) {
+                if !pathStarted {
+                    path.move(to: pointToDraw)
+                    pathStarted = true
                 } else {
-                    let cgPoint = mapView.convert(splineCoords[i], toPointTo: mapView)
-                    path.addLine(to: cgPoint)
+                    path.addLine(to: pointToDraw)
                 }
+            } else {
+                // Break path for points outside safe frustum to prevent long cross-screen lines
+                pathStarted = false
             }
         }
         
@@ -389,6 +417,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
         var onAnnotationSelected: ((_ photoIDs: [String], _ screenPoint: CGPoint) -> Void)?
         var onWaypointLitUp: ((_ waypointIndex: Int) -> Void)?
         var isPlayingOrPreparing = false
+        var lastIsGCJ02Required: Bool? = nil
         
         // 3D Memory Sandbox state
         var currentPitch: CGFloat = 0
@@ -460,6 +489,9 @@ struct PhotoClusterMapView: UIViewRepresentable {
         
         mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "waypoint")
         
+        // Anti-Ghosting: Ensure only one path layer exists in the view hierarchy
+        mapView.layer.sublayers?.filter { $0.name == "PhotoTrailPathLayer" }.forEach { $0.removeFromSuperlayer() }
+        
         // Attach hardware accelerated line layer above the map's tiles
         context.coordinator.splineManager.shapeLayer.zPosition = 1000
         mapView.layer.addSublayer(context.coordinator.splineManager.shapeLayer)
@@ -476,17 +508,38 @@ struct PhotoClusterMapView: UIViewRepresentable {
             uiView.mapType = mapType
         }
         
-        let splineCoords: [CLLocationCoordinate2D]
+        // Anti-Ghosting: Aggressively audit ALL CAShapeLayer sublayers
+        // To be safe, we remove ANY CAShapeLayer that is not exactly the one managed by current coordinator
+        uiView.layer.sublayers?.forEach { layer in
+            if let shape = layer as? CAShapeLayer, shape !== context.coordinator.splineManager.shapeLayer {
+                shape.removeFromSuperlayer()
+            }
+        }
+        
+        // Ensure our current layer is healthy and attached
+        if context.coordinator.splineManager.shapeLayer.superlayer == nil {
+            uiView.layer.addSublayer(context.coordinator.splineManager.shapeLayer)
+        }
+        
+        // Always fetch the latest requirement from the global manager to keep multiple instances in sync
+        let currentStyleIsGCJ02 = MapStyleManager.shared.currentStyle.isGCJ02Required
+        var splineCoords: [CLLocationCoordinate2D] = []
         
         // 1. Update Annotations, Overlays & Overview Bounds
-        if context.coordinator.lastWaypoints != waypoints {
+        let waypointsChanged = context.coordinator.lastWaypoints != waypoints
+        let gCJ02RequirementChanged = context.coordinator.lastIsGCJ02Required != currentStyleIsGCJ02
+        
+        if waypointsChanged || gCJ02RequirementChanged {
             context.coordinator.lastWaypoints = waypoints
-            splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints, isGCJ02Required: isGCJ02Required)
+            context.coordinator.lastIsGCJ02Required = currentStyleIsGCJ02
+            
+            splineCoords = SplineRouteBuilder.buildSmoothSpline(waypoints: waypoints, isGCJ02Required: currentStyleIsGCJ02)
             context.coordinator.lastSplineCoords = splineCoords
+            context.coordinator.lastProgress = playbackProgress // RESET STALE PROGRESS
             
             // Precompute: map each waypoint to its closest spline index
             context.coordinator.waypointSplineIndices = waypoints.map { wp in
-                let wpCoord = isGCJ02Required ? CoordinateConverter.transformFromWGSToGCJ(coordinate: wp.coordinate) : wp.coordinate
+                let wpCoord = currentStyleIsGCJ02 ? CoordinateConverter.transformFromWGSToGCJ(coordinate: wp.coordinate) : wp.coordinate
                 var bestIdx = 0
                 var bestDist = Double.greatestFiniteMagnitude
                 for (i, sc) in splineCoords.enumerated() {
@@ -498,7 +551,7 @@ struct PhotoClusterMapView: UIViewRepresentable {
             
             // Rebuild Annotations
             uiView.removeAnnotations(uiView.annotations)
-            let newAnnotations = waypoints.enumerated().map { WaypointAnnotation(waypoint: $1, index: $0, isGCJ02Required: isGCJ02Required) }
+            let newAnnotations = waypoints.enumerated().map { WaypointAnnotation(waypoint: $1, index: $0, isGCJ02Required: currentStyleIsGCJ02) }
             uiView.addAnnotations(newAnnotations)
             
             // Rebuild Overlays
